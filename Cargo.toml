@@ -1,0 +1,15 @@
+[package]
+name = "cellulite"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+h3o = "0.7.1"
+heed = "0.22.0"
+ordered-float = "5.0.0"
+roaring = "0.10.10"
+thiserror = "2.0.12"
+
+[dev-dependencies]
+insta = "1.42.2"
+tempfile = "3.19.1"
