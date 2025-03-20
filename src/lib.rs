@@ -92,6 +92,7 @@ impl Writer {
         Ok(())
     }
 
+    // TODO: this is wrong => maybe our point was on a the side of a cell and the point at the top of the cell are further away than the point in the cell below
     pub fn nearest_point(
         &self,
         rtxn: &RoTxn,
