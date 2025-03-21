@@ -51,7 +51,6 @@ impl Writer {
     // TODO: Can be hugely optimized by specifying the base cell + when we split a "leaf" group all items by their sub-level leaf and make just a few calls.
     //       with the current implementation we're deserializing and reserializing and rereading and rewriting the same bitmap once per items instead of once + once for each children (5-6 times more).
     fn insert_items(&self, wtxn: &mut RwTxn, items: RoaringBitmap, res: Resolution) -> Result<()> {
-        println!("{}", self.threshold);
         for item in items {
             let cell = self
                 .db
@@ -72,12 +71,9 @@ impl Writer {
                     let Some(next_res) = res.succ() else { continue };
 
                     if bitmap.len() >= self.threshold {
-                        println!("here");
                         let to_insert = if already_splitted {
-                            println!("hore");
                             RoaringBitmap::from_sorted_iter(Some(item)).unwrap()
                         } else {
-                            println!("hoare");
                             bitmap
                         };
                         self.insert_items(wtxn, to_insert, next_res)?;
@@ -118,6 +114,12 @@ impl Writer {
                     res = sub_res;
                 }
                 None => break,
+            }
+        }
+
+        for cell in lat_lng_cell.to_cell(res).grid_disk::<Vec<_>>(1) {
+            if let Some(sub_bitmap) = self.db.get(rtxn, &Key::Cell(cell))? {
+                bitmap |= sub_bitmap;
             }
         }
 
@@ -387,12 +389,15 @@ mod test {
     fn basic_nearest() {
         let handle = create_database();
         let mut wtxn = handle.env.write_txn().unwrap();
-        let writer = Writer::new(handle.database);
+        let mut writer = Writer::new(handle.database);
+        writer.threshold = 10;
         // We'll draw a simple line over the y as seen below
         // (0,0) # # # # # # ...
         for i in 0..100 {
             writer.add_item(&mut wtxn, i, (i as f64, 0.0)).unwrap();
         }
+        // insta::assert_snapshot!(handle.snap(&wtxn), @r###"
+        // "###);
         wtxn.commit().unwrap();
 
         let rtxn = handle.env.read_txn().unwrap();
