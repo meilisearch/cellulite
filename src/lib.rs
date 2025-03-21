@@ -2,7 +2,7 @@ use ::roaring::RoaringBitmap;
 use h3o::{error::InvalidLatLng, CellIndex, LatLng, Resolution};
 use heed::{
     byteorder::{BigEndian, ByteOrder},
-    RoTxn, RwTxn,
+    RoTxn, RwTxn, Unspecified,
 };
 use ordered_float::OrderedFloat;
 
@@ -10,7 +10,7 @@ mod roaring;
 
 use crate::roaring::RoaringBitmapCodec;
 
-pub type Database = heed::Database<KeyCodec, RoaringBitmapCodec>;
+pub type Database = heed::Database<KeyCodec, Unspecified>;
 pub type ItemId = u32;
 
 #[derive(Debug, thiserror::Error)]
@@ -44,13 +44,29 @@ impl Writer {
             .db
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter(rtxn, &KeyVariant::Cell)?
-            .remap_key_type::<KeyCodec>()
+            .remap_types::<KeyCodec, RoaringBitmapCodec>()
             .map(|res| {
-                res.map(|(cell, bitmap)| {
-                    let Key::Cell(cell) = cell else {
-                        unreachable!()
-                    };
+                res.map(|(key, bitmap)| {
+                    let Key::Cell(cell) = key else { unreachable!() };
                     (cell, bitmap)
+                })
+            }))
+    }
+
+    /// Return all the cells used internally in the database
+    pub fn items<'a>(
+        &self,
+        rtxn: &'a RoTxn,
+    ) -> Result<impl Iterator<Item = Result<(ItemId, CellIndex), heed::Error>> + 'a> {
+        Ok(self
+            .db
+            .remap_key_type::<KeyPrefixVariantCodec>()
+            .prefix_iter(rtxn, &KeyVariant::Item)?
+            .remap_types::<KeyCodec, CellIndexCodec>()
+            .map(|res| {
+                res.map(|(key, cell)| {
+                    let Key::Item(item) = key else { unreachable!() };
+                    (item, cell)
                 })
             }))
     }
@@ -69,24 +85,27 @@ impl Writer {
         )
     }
 
+    fn item_db(&self) -> heed::Database<KeyCodec, CellIndexCodec> {
+        self.db.remap_data_type()
+    }
+
+    fn cell_db(&self) -> heed::Database<KeyCodec, RoaringBitmapCodec> {
+        self.db.remap_data_type()
+    }
+
     // TODO: Can be hugely optimized by specifying the base cell + when we split a "leaf" group all items by their sub-level leaf and make just a few calls.
     //       with the current implementation we're deserializing and reserializing and rereading and rewriting the same bitmap once per items instead of once + once for each children (5-6 times more).
     fn insert_items(&self, wtxn: &mut RwTxn, items: RoaringBitmap, res: Resolution) -> Result<()> {
         for item in items {
-            let cell = self
-                .db
-                .remap_data_type::<CellIndexCodec>()
-                .get(wtxn, &Key::Item(item))?
-                .unwrap();
+            let cell = self.item_db().get(wtxn, &Key::Item(item))?.unwrap();
             // This item cells are always at the maximum resolution and have a parent
             let cell = cell.parent(res).unwrap();
             let key = Key::Cell(cell);
-            match self.db.get(wtxn, &key)? {
+            match self.cell_db().get(wtxn, &key)? {
                 Some(mut bitmap) => {
                     let already_splitted = bitmap.len() >= self.threshold;
-                    dbg!(&bitmap);
                     bitmap.insert(item);
-                    self.db.put(wtxn, &key, &bitmap)?;
+                    self.cell_db().put(wtxn, &key, &bitmap)?;
 
                     // If we reached the maximum precision we can stop immediately
                     let Some(next_res) = res.succ() else { continue };
@@ -102,7 +121,7 @@ impl Writer {
                 }
                 None => {
                     let bitmap = RoaringBitmap::from_sorted_iter(Some(item)).unwrap();
-                    self.db.put(wtxn, &key, &bitmap)?;
+                    self.cell_db().put(wtxn, &key, &bitmap)?;
                 }
             }
         }
@@ -125,7 +144,7 @@ impl Writer {
             let cell = lat_lng_cell.to_cell(res);
             let key = Key::Cell(cell);
             // We're looking for the resolution that gives us just slightly more elements than the limit
-            match self.db.get(rtxn, &key)? {
+            match self.cell_db().get(rtxn, &key)? {
                 Some(sub_bitmap) => {
                     if sub_bitmap.len() < limit {
                         break;
@@ -139,7 +158,7 @@ impl Writer {
         }
 
         for cell in lat_lng_cell.to_cell(res).grid_disk::<Vec<_>>(1) {
-            if let Some(sub_bitmap) = self.db.get(rtxn, &Key::Cell(cell))? {
+            if let Some(sub_bitmap) = self.cell_db().get(rtxn, &Key::Cell(cell))? {
                 bitmap |= sub_bitmap;
             }
         }
@@ -148,12 +167,7 @@ impl Writer {
         for item in bitmap {
             ret.push((
                 item,
-                LatLng::from(
-                    self.db
-                        .remap_data_type::<CellIndexCodec>()
-                        .get(rtxn, &Key::Item(item))?
-                        .unwrap(),
-                ),
+                LatLng::from(self.item_db().get(rtxn, &Key::Item(item))?.unwrap()),
             ));
         }
         ret.sort_by_cached_key(|(_, other)| OrderedFloat(lat_lng_cell.distance_m(*other)));
