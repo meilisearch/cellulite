@@ -3,6 +3,9 @@ name = "cellulite"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["examples/*"]
+
 [dependencies]
 h3o = "0.7.1"
 heed = "0.22.0"

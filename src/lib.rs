@@ -23,15 +23,36 @@ pub enum Error {
 
 type Result<O, E = Error> = std::result::Result<O, E>;
 
+#[derive(Clone)]
 pub struct Writer {
     db: Database,
     /// After how many elements should we break a cell into sub-cells
-    threshold: u64,
+    pub threshold: u64,
 }
 
 impl Writer {
     pub fn new(db: Database) -> Self {
         Self { db, threshold: 200 }
+    }
+
+    /// Return all the cells used internally in the database
+    pub fn inner_db_cells<'a>(
+        &self,
+        rtxn: &'a RoTxn,
+    ) -> Result<impl Iterator<Item = Result<(CellIndex, RoaringBitmap), heed::Error>> + 'a> {
+        Ok(self
+            .db
+            .remap_key_type::<KeyPrefixVariantCodec>()
+            .prefix_iter(rtxn, &KeyVariant::Cell)?
+            .remap_key_type::<KeyCodec>()
+            .map(|res| {
+                res.map(|(cell, bitmap)| {
+                    let Key::Cell(cell) = cell else {
+                        unreachable!()
+                    };
+                    (cell, bitmap)
+                })
+            }))
     }
 
     pub fn add_item(&self, wtxn: &mut RwTxn, item: ItemId, coord: (f64, f64)) -> Result<()> {
