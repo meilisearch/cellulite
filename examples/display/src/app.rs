@@ -1,5 +1,5 @@
 use std::sync::{
-    atomic::{AtomicU32, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     Arc,
 };
 
@@ -9,14 +9,17 @@ use heed::{Env, EnvOpenOptions};
 use tempfile::TempDir;
 use walkers::{lon_lat, sources::OpenStreetMap, HttpTiles, Map, MapMemory, Plugin, Position};
 
-pub struct TemplateApp {
+pub struct App {
     // Map
     tiles: HttpTiles,
     map_memory: MapMemory,
 
     // Database
+    #[allow(dead_code)]
     env: Env,
+    #[allow(dead_code)]
     db: Writer,
+    #[allow(dead_code)]
     temp_dir: tempfile::TempDir,
 
     // Plugins
@@ -25,7 +28,7 @@ pub struct TemplateApp {
     display_db_cells: DisplayDbCells,
 }
 
-impl TemplateApp {
+impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let temp_dir = TempDir::new().unwrap();
 
@@ -54,19 +57,16 @@ impl TemplateApp {
     }
 }
 
-impl eframe::App for TemplateApp {
+impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                let is_web = cfg!(target_arch = "wasm32");
-                if !is_web {
-                    ui.menu_button("File", |ui| {
-                        if ui.button("Quit").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
-                    ui.add_space(16.0);
-                }
+                ui.menu_button("File", |ui| {
+                    if ui.button("Quit").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                ui.add_space(16.0);
 
                 egui::widgets::global_theme_preference_buttons(ui);
             });
@@ -89,12 +89,12 @@ impl eframe::App for TemplateApp {
                 Map::new(
                     Some(&mut self.tiles),
                     &mut self.map_memory,
-                    lon_lat(3.60698, 43.99155),
+                    lon_lat(3.60698, 43.99155), // best city ever
                 )
                 .with_plugin(self.extract_lat_lng.clone())
                 .with_plugin(self.insert_into_database.clone())
                 .with_plugin(self.display_db_cells.clone())
-                .zoom_speed(1.0),
+                .zoom_speed(0.5),
             );
         });
     }
@@ -103,7 +103,7 @@ impl eframe::App for TemplateApp {
 /// Plugin used to display the cells
 #[derive(Clone)]
 struct DisplayDbCells {
-    display: Arc<bool>,
+    display: Arc<AtomicBool>,
     env: Env,
     db: Writer,
 }
@@ -111,7 +111,7 @@ struct DisplayDbCells {
 impl DisplayDbCells {
     fn new(env: Env, db: Writer) -> Self {
         DisplayDbCells {
-            display: Arc::default(),
+            display: Arc::new(AtomicBool::new(true)),
             env,
             db,
         }
@@ -128,25 +128,27 @@ impl Plugin for DisplayDbCells {
         let painter = ui.painter();
         let rtxn = self.env.read_txn().unwrap();
 
-        for entry in self.db.inner_db_cells(&rtxn).unwrap() {
-            let (cell, bitmap) = entry.unwrap();
-            let polygon = h3o::geom::dissolve(Some(cell)).unwrap().0;
-            let lines = polygon[0]
-                .exterior()
-                .0
-                .iter()
-                .map(|point| projector.project(Position::new(point.x, point.y)).to_pos2())
-                .collect();
-            painter.line(
-                lines,
-                PathStroke::new(
-                    16.0 - cell.resolution() as u8 as f32,
-                    Color32::BLUE.lerp_to_gamma(
-                        Color32::RED,
-                        bitmap.len() as f32 / self.db.threshold as f32,
+        if self.display.load(Ordering::Relaxed) {
+            for entry in self.db.inner_db_cells(&rtxn).unwrap() {
+                let (cell, bitmap) = entry.unwrap();
+                let polygon = h3o::geom::dissolve(Some(cell)).unwrap().0;
+                let lines = polygon[0]
+                    .exterior()
+                    .0
+                    .iter()
+                    .map(|point| projector.project(Position::new(point.x, point.y)).to_pos2())
+                    .collect();
+                painter.line(
+                    lines,
+                    PathStroke::new(
+                        16.0 - cell.resolution() as u8 as f32,
+                        Color32::BLUE.lerp_to_gamma(
+                            Color32::RED,
+                            bitmap.len() as f32 / self.db.threshold as f32,
+                        ),
                     ),
-                ),
-            );
+                );
+            }
         }
     }
 }
