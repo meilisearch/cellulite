@@ -141,7 +141,10 @@ impl Plugin for DisplayDbCells {
                 lines,
                 PathStroke::new(
                     16.0 - cell.resolution() as u8 as f32,
-                    Color32::BLUE.lerp_to_gamma(Color32::RED, bitmap.len() as f32 / 4.0),
+                    Color32::BLUE.lerp_to_gamma(
+                        Color32::RED,
+                        bitmap.len() as f32 / self.db.threshold as f32,
+                    ),
                 ),
             );
         }
