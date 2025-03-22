@@ -1,5 +1,6 @@
 use cellulite::{Database, Writer};
 use heed::EnvOpenOptions;
+use tempfile::TempDir;
 
 mod france_shops;
 
@@ -10,13 +11,18 @@ fn main() {
     println!("Deserialized the points in {:?}", time.elapsed());
 
     println!("Database setup");
-    let dir = tempfile::tempdir().unwrap();
-    let env = unsafe {
-        EnvOpenOptions::new()
-            .map_size(200 * 1024 * 1024)
-            .open(dir.path())
-    }
-    .unwrap();
+    let (_temp_dir, path) = match std::env::args().nth(1) {
+        None => {
+            let temp_dir = TempDir::new().unwrap();
+            let path = temp_dir.path().to_str().unwrap().to_string();
+            (Some(temp_dir), path)
+        }
+        Some(path) => {
+            std::fs::create_dir_all(&path).unwrap();
+            (None, path)
+        }
+    };
+    let env = unsafe { EnvOpenOptions::new().map_size(200 * 1024 * 1024).open(path) }.unwrap();
     let mut wtxn = env.write_txn().unwrap();
     let database: Database = env.create_database(&mut wtxn, None).unwrap();
     wtxn.commit().unwrap();
