@@ -62,7 +62,7 @@ impl Plugin for DisplayDbContent {
             }
         }
 
-        if self.display_db_cells.load(Ordering::Relaxed) {
+        if self.display_items.load(Ordering::Relaxed) {
             for entry in self.db.items(&rtxn).unwrap() {
                 let (_item_id, cell) = entry.unwrap();
                 let lat_lng = LatLng::from(cell);
