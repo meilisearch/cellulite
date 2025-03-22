@@ -10,3 +10,4 @@ heed = "0.22.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 flate2 = "1.1.0"
+geo = { version = "0.29.3", features = ["proj", "use-proj"] }
