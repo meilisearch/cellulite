@@ -5,6 +5,7 @@ use std::sync::{
 
 use cellulite::{Database, Writer};
 use egui::{epaint::PathStroke, CentralPanel, Color32, Vec2};
+use h3o::LatLng;
 use heed::{Env, EnvOpenOptions};
 use tempfile::TempDir;
 use walkers::{lon_lat, sources::OpenStreetMap, HttpTiles, Map, MapMemory, Plugin, Position};
@@ -147,6 +148,27 @@ impl Plugin for DisplayDbCells {
                             bitmap.len() as f32 / self.db.threshold as f32,
                         ),
                     ),
+                );
+            }
+
+            for entry in self.db.items(&rtxn).unwrap() {
+                let (_item_id, cell) = entry.unwrap();
+                let lat_lng = LatLng::from(cell);
+                let center = projector.project(Position::new(lat_lng.lng(), lat_lng.lat()));
+                let size = 8.0;
+                painter.line(
+                    vec![
+                        (center - Vec2::splat(size)).to_pos2(),
+                        (center + Vec2::splat(size)).to_pos2(),
+                    ],
+                    PathStroke::new(4.0, Color32::BLACK),
+                );
+                painter.line(
+                    vec![
+                        (center + Vec2::new(size, -size)).to_pos2(),
+                        (center + Vec2::new(-size, size)).to_pos2(),
+                    ],
+                    PathStroke::new(4.0, Color32::BLACK),
                 );
             }
         }
