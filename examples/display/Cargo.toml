@@ -23,3 +23,4 @@ tempfile = "3.19.1"
 heed = "0.22.0"
 h3o = { version = "0.7.1", features = ["geo"] }
 walkers = "0.35.0"
+geo-types = "0.7.15"

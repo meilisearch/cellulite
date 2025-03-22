@@ -1,5 +1,10 @@
 use ::roaring::RoaringBitmap;
-use h3o::{error::InvalidLatLng, CellIndex, LatLng, Resolution};
+use geo_types::Polygon;
+use h3o::{
+    error::{InvalidGeometry, InvalidLatLng},
+    geom::{ContainmentMode, TilerBuilder},
+    CellIndex, LatLng, Resolution,
+};
 use heed::{
     byteorder::{BigEndian, ByteOrder},
     RoTxn, RwTxn, Unspecified,
@@ -19,6 +24,8 @@ pub enum Error {
     Heed(#[from] heed::Error),
     #[error(transparent)]
     InvalidLatLng(#[from] InvalidLatLng),
+    #[error(transparent)]
+    InvalidGeometry(#[from] InvalidGeometry),
 }
 
 type Result<O, E = Error> = std::result::Result<O, E>;
@@ -51,6 +58,18 @@ impl Writer {
                     (cell, bitmap)
                 })
             }))
+    }
+
+    /// Return the coordinates of the items rounded down to 50cm if this id exists in the DB. Returns `None` otherwise.
+    pub fn item(&self, rtxn: &RoTxn, item: ItemId) -> Result<Option<(f64, f64)>> {
+        match self.item_db().get(rtxn, &Key::Item(item)) {
+            Ok(Some(cell)) => {
+                let c = LatLng::from(cell);
+                Ok(Some((c.lat(), c.lng())))
+            }
+            Ok(None) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
     }
 
     /// Return all the cells used internally in the database
@@ -126,6 +145,31 @@ impl Writer {
             }
         }
         Ok(())
+    }
+
+    // The strategy to retrieve the points in a shape is to:
+    // 1. Retrieve all the cell@res0 that contains the shape
+    // 2. Iterate over these cells
+    //  2.1.If a cell fit entirely *inside* the shape, add all its items to the result
+    //  2.2 Otherwise:
+    //   - If the cell is a leaf => iterate over all of its point and add the one that fits in the shape to the result
+    //   - Otherwise, increase the precision and iterate on the range of cells => repeat step 2
+    pub fn in_shape(&self, rtxn: &RoTxn, polygon: Polygon) -> Result<RoaringBitmap> {
+        let mut tiler = TilerBuilder::new(Resolution::Zero)
+            .containment_mode(ContainmentMode::Covers)
+            .build();
+        tiler.add(polygon)?;
+
+        let cells = tiler.into_coverage();
+        let mut ret = RoaringBitmap::new();
+        for cell in cells {
+            let Some(items) = self.cell_db().get(rtxn, &Key::Cell(cell))? else {
+                continue;
+            };
+            ret |= items;
+        }
+
+        Ok(ret)
     }
 
     // TODO: this is wrong => maybe our point was on a the side of a cell and the point at the top of the cell are further away than the point in the cell below
