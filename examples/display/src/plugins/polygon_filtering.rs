@@ -9,10 +9,12 @@ use geo_types::{Coord, LineString, Polygon};
 use heed::Env;
 use walkers::{Plugin, Position};
 
+use crate::utils::project_line_string;
+
 /// Plugin used to create or delete a polygon used to select a subset of points
 #[derive(Clone)]
 pub struct PolygonFiltering {
-    pub polygon_points: Arc<Mutex<Vec<Coord<f32>>>>,
+    pub polygon_points: Arc<Mutex<Vec<Coord<f64>>>>,
     pub in_creation: Arc<AtomicBool>,
     env: Env,
     db: Writer,
@@ -49,9 +51,15 @@ impl Plugin for PolygonFiltering {
                     y: pos.y() as f32,
                 };
                 if response.secondary_clicked() {
-                    line.push(coord);
+                    line.push(Coord {
+                        x: coord.x as f64,
+                        y: coord.y as f64,
+                    });
                 }
-                to_display.push(coord);
+                to_display.push(Coord {
+                    x: coord.x as f64,
+                    y: coord.y as f64,
+                });
             } else if line.len() >= 2 {
                 let first = *line.first().unwrap();
                 to_display.push(first);
@@ -62,31 +70,13 @@ impl Plugin for PolygonFiltering {
             Color32::GREEN
         };
 
-        let line = to_display
-            .iter()
-            .map(|point| {
-                projector
-                    .project(Position::new(point.x as f64, point.y as f64))
-                    .to_pos2()
-            })
-            .collect();
+        let line = project_line_string(projector, &line);
 
         painter.line(line, PathStroke::new(8.0, color));
 
         // If we have a polygon + it's finished we retrieve the points it contains and display them
         if to_display.len() >= 3 && !in_creation {
-            let polygon = Polygon::new(
-                LineString(
-                    to_display
-                        .into_iter()
-                        .map(|coord| Coord {
-                            x: coord.x as f64,
-                            y: coord.y as f64,
-                        })
-                        .collect(),
-                ),
-                Vec::new(),
-            );
+            let polygon = Polygon::new(LineString(to_display), Vec::new());
             let rtxn = self.env.read_txn().unwrap();
             let results = self.db.in_shape(&rtxn, polygon).unwrap();
 

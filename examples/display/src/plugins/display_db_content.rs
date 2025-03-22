@@ -9,6 +9,8 @@ use h3o::LatLng;
 use heed::Env;
 use walkers::{Plugin, Position};
 
+use crate::utils::project_line_string;
+
 /// Plugin used to display the cells
 #[derive(Clone)]
 pub struct DisplayDbContent {
@@ -43,14 +45,9 @@ impl Plugin for DisplayDbContent {
             for entry in self.db.inner_db_cells(&rtxn).unwrap() {
                 let (cell, bitmap) = entry.unwrap();
                 let polygon = h3o::geom::dissolve(Some(cell)).unwrap().0;
-                let lines = polygon[0]
-                    .exterior()
-                    .0
-                    .iter()
-                    .map(|point| projector.project(Position::new(point.x, point.y)).to_pos2())
-                    .collect();
+                let line = project_line_string(projector, &polygon[0].exterior().0);
                 painter.line(
-                    lines,
+                    line,
                     PathStroke::new(
                         16.0 - cell.resolution() as u8 as f32,
                         Color32::BLUE.lerp_to_gamma(
