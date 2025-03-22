@@ -19,7 +19,7 @@ pub struct App {
     #[allow(dead_code)]
     db: Writer,
     #[allow(dead_code)]
-    temp_dir: tempfile::TempDir,
+    temp_dir: Option<tempfile::TempDir>,
 
     // Plugins
     extract_lat_lng: plugins::ExtractLatLng,
@@ -30,14 +30,16 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let temp_dir = TempDir::new().unwrap();
+        let (temp_dir, path) = match std::env::args().nth(1) {
+            None => {
+                let temp_dir = TempDir::new().unwrap();
+                let path = temp_dir.path().to_str().unwrap().to_string();
+                (Some(temp_dir), path)
+            }
+            Some(path) => (None, path),
+        };
 
-        let env = unsafe {
-            EnvOpenOptions::new()
-                .map_size(200 * 1024 * 1024)
-                .open(temp_dir.path())
-        }
-        .unwrap();
+        let env = unsafe { EnvOpenOptions::new().map_size(200 * 1024 * 1024).open(path) }.unwrap();
         let mut wtxn = env.write_txn().unwrap();
         let database: Database = env.create_database(&mut wtxn, None).unwrap();
         wtxn.commit().unwrap();
