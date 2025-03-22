@@ -70,7 +70,7 @@ impl Plugin for PolygonFiltering {
             Color32::GREEN
         };
 
-        let line = project_line_string(projector, &line);
+        let line = project_line_string(projector, &to_display);
 
         painter.line(line, PathStroke::new(8.0, color));
 
@@ -78,7 +78,9 @@ impl Plugin for PolygonFiltering {
         if to_display.len() >= 3 && !in_creation {
             let polygon = Polygon::new(LineString(to_display), Vec::new());
             let rtxn = self.env.read_txn().unwrap();
+            let now = std::time::Instant::now();
             let results = self.db.in_shape(&rtxn, polygon).unwrap();
+            println!("Found {} items in {:?}", results.len(), now.elapsed());
 
             let size = 8.0;
             for item in results {
