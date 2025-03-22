@@ -8,7 +8,7 @@ members = ["examples/*"]
 
 [dependencies]
 geo-types = "0.7.15"
-h3o = "0.7.1"
+h3o = { version = "0.7.1", features = ["geo"] }
 heed = "0.22.0"
 ordered-float = "5.0.0"
 roaring = "0.10.10"
