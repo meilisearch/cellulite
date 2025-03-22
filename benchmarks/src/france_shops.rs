@@ -1,3 +1,4 @@
+use geo::{Transform, algorithm::proj::Proj};
 use std::io::BufReader;
 
 use flate2::bufread::GzDecoder;
@@ -31,10 +32,13 @@ pub fn parse() -> Vec<(f64, f64)> {
     let file = BufReader::new(file);
     let file = GzDecoder::new(file);
     let input: Schema = serde_json::from_reader(file).unwrap();
+    let projection = Proj::new_known_crs("EPSG:3857", "EPSG:4326", None).unwrap();
+
     input
         .features
         .iter()
         .map(|feature| feature.geometry.coordinates)
-        .map(|[x, y]| (x, y))
+        .map(|[x, y]| projection.convert((x, y)).unwrap())
+        .map(|(x, y)| (y, x))
         .collect()
 }
