@@ -1,4 +1,5 @@
 use ::roaring::RoaringBitmap;
+use geo::{Contains, Coord, Intersects};
 use geo_types::Polygon;
 use h3o::{
     error::{InvalidGeometry, InvalidLatLng},
@@ -159,15 +160,36 @@ impl Writer {
         let mut tiler = TilerBuilder::new(Resolution::Zero)
             .containment_mode(ContainmentMode::Covers)
             .build();
-        tiler.add(polygon)?;
+        tiler.add(polygon.clone())?;
 
         let cells = tiler.into_coverage();
         let mut ret = RoaringBitmap::new();
+        let mut double_check = RoaringBitmap::new();
+
         for cell in cells {
             let Some(items) = self.cell_db().get(rtxn, &Key::Cell(cell))? else {
                 continue;
             };
-            ret |= items;
+
+            // Can't fail since we specified only one cell
+            let cell_polygon = h3o::geom::dissolve(Some(cell)).unwrap().0;
+            let cell_polygon = &cell_polygon[0];
+            if polygon.contains(cell_polygon) {
+                ret |= items;
+            } else if polygon.intersects(cell_polygon) {
+                double_check |= items;
+            }
+        }
+
+        for item in double_check {
+            let cell = self.item_db().get(rtxn, &Key::Item(item))?.unwrap();
+            let coord = LatLng::from(cell);
+            if polygon.contains(&Coord {
+                x: coord.lng(),
+                y: coord.lat(),
+            }) {
+                ret.insert(item);
+            }
         }
 
         Ok(ret)
