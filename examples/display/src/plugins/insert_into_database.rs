@@ -26,6 +26,17 @@ impl InsertIntoDatabase {
             db,
         }
     }
+
+    pub fn insert_random_items(&self, n: usize) {
+        let mut wtxn = self.env.write_txn().unwrap();
+        for _ in 0..n {
+            let lat = rand::random_range(-90.0..=90.0);
+            let lng = rand::random_range(-180.0..=180.0);
+            let id = self.id.fetch_add(1, Ordering::Relaxed);
+            self.db.add_item(&mut wtxn, id, (lat, lng)).unwrap();
+        }
+        wtxn.commit().unwrap();
+    }
 }
 
 impl Plugin for InsertIntoDatabase {

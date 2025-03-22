@@ -72,6 +72,9 @@ impl App {
             self.extract_lat_lng.clicked_lat.load(Ordering::Relaxed),
             self.extract_lat_lng.clicked_lng.load(Ordering::Relaxed)
         ));
+        if ui.button("Insert a shit ton of random points").clicked() {
+            self.insert_into_database.insert_random_items(1000);
+        }
         let mut display_items = self
             .display_db_content
             .display_items
