@@ -162,11 +162,11 @@ impl Writer {
             .build();
         tiler.add(polygon.clone())?;
 
-        let cells = tiler.into_coverage();
         let mut ret = RoaringBitmap::new();
         let mut double_check = RoaringBitmap::new();
+        let mut to_explore: Vec<_> = tiler.into_coverage().collect();
 
-        for cell in cells {
+        while let Some(cell) = to_explore.pop() {
             let Some(items) = self.cell_db().get(rtxn, &Key::Cell(cell))? else {
                 continue;
             };
@@ -177,8 +177,14 @@ impl Writer {
             if polygon.contains(cell_polygon) {
                 ret |= items;
             } else if polygon.intersects(cell_polygon) {
-                double_check |= items;
-            }
+                let resolution = cell.resolution();
+                if items.len() < self.threshold || resolution == Resolution::Fifteen {
+                    double_check |= items;
+                } else {
+                    // unwrap is safe since we checked we're not at the last resolution right above
+                    to_explore.extend(cell.children(resolution.succ().unwrap()));
+                }
+            } // else: we can ignore the cell, it's not part of our shape
         }
 
         for item in double_check {
