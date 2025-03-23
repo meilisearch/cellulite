@@ -3,30 +3,25 @@ use std::sync::{
     Arc,
 };
 
-use cellulite::Writer;
 use egui::{epaint::PathStroke, Color32, Vec2};
-use h3o::LatLng;
-use heed::Env;
 use walkers::{Plugin, Position};
 
-use crate::utils::{display_cell, project_line_string};
+use crate::{runner::Runner, utils::display_cell};
 
 /// Plugin used to display the cells
 #[derive(Clone)]
 pub struct DisplayDbContent {
     pub display_db_cells: Arc<AtomicBool>,
     pub display_items: Arc<AtomicBool>,
-    env: Env,
-    db: Writer,
+    runner: Runner,
 }
 
 impl DisplayDbContent {
-    pub fn new(env: Env, db: Writer) -> Self {
+    pub fn new(runner: Runner) -> Self {
         DisplayDbContent {
             display_db_cells: Arc::new(AtomicBool::new(true)),
             display_items: Arc::new(AtomicBool::new(true)),
-            env,
-            db,
+            runner,
         }
     }
 }
@@ -39,28 +34,24 @@ impl Plugin for DisplayDbContent {
         projector: &walkers::Projector,
     ) {
         let painter = ui.painter();
-        let rtxn = self.env.read_txn().unwrap();
 
         if self.display_db_cells.load(Ordering::Relaxed) {
-            for entry in self.db.inner_db_cells(&rtxn).unwrap() {
-                let (cell, bitmap) = entry.unwrap();
+            for (cell, nb_points) in self.runner.all_db_cells.lock().iter().copied() {
                 display_cell(
                     projector,
                     painter,
                     cell,
                     Color32::BLUE.lerp_to_gamma(
                         Color32::RED,
-                        bitmap.len() as f32 / self.db.threshold as f32,
+                        nb_points as f32 / self.runner.db.threshold as f32,
                     ),
                 );
             }
         }
 
         if self.display_items.load(Ordering::Relaxed) {
-            for entry in self.db.items(&rtxn).unwrap() {
-                let (_item_id, cell) = entry.unwrap();
-                let lat_lng = LatLng::from(cell);
-                let center = projector.project(Position::new(lat_lng.lng(), lat_lng.lat()));
+            for coord in self.runner.all_items.lock().iter().copied() {
+                let center = projector.project(Position::new(coord.lng(), coord.lat()));
                 let size = 8.0;
                 painter.line(
                     vec![
