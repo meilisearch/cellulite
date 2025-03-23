@@ -3,13 +3,13 @@ use std::sync::{
     Arc,
 };
 
-use cellulite::Writer;
+use cellulite::{FilteringStep, Writer};
 use egui::{epaint::PathStroke, mutex::Mutex, Color32, Pos2, Vec2};
 use geo_types::{Coord, LineString, Polygon};
 use heed::Env;
 use walkers::{Plugin, Position};
 
-use crate::utils::project_line_string;
+use crate::utils::{display_cell, project_line_string};
 
 /// Plugin used to create or delete a polygon used to select a subset of points
 #[derive(Clone)]
@@ -79,7 +79,11 @@ impl Plugin for PolygonFiltering {
             let polygon = Polygon::new(LineString(to_display), Vec::new());
             let rtxn = self.env.read_txn().unwrap();
             let now = std::time::Instant::now();
-            let results = self.db.in_shape(&rtxn, polygon).unwrap();
+            let mut steps = Vec::new();
+            let results = self
+                .db
+                .in_shape(&rtxn, polygon, &mut |step| steps.push(step))
+                .unwrap();
             println!("Found {} items in {:?}", results.len(), now.elapsed());
 
             let size = 8.0;
@@ -114,6 +118,17 @@ impl Plugin for PolygonFiltering {
                     ],
                     PathStroke::new(4.0, Color32::DARK_GREEN),
                 );
+            }
+
+            for (action, cell) in steps {
+                let color = match action {
+                    FilteringStep::NotPresentInDB => Color32::BLACK,
+                    FilteringStep::OutsideOfShape => Color32::RED,
+                    FilteringStep::Returned => Color32::GREEN,
+                    FilteringStep::RequireDoubleCheck => Color32::YELLOW,
+                    FilteringStep::DeepDive => Color32::BLUE,
+                };
+                display_cell(projector, painter, cell, color);
             }
         }
     }
