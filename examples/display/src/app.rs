@@ -6,7 +6,7 @@ use heed::{Env, EnvOpenOptions};
 use tempfile::TempDir;
 use walkers::{lon_lat, sources::OpenStreetMap, HttpTiles, Map, MapMemory};
 
-use crate::plugins;
+use crate::{plugins, runner::Runner};
 
 pub struct App {
     // Map
@@ -20,6 +20,8 @@ pub struct App {
     db: Writer,
     #[allow(dead_code)]
     temp_dir: Option<tempfile::TempDir>,
+
+    runner: Runner,
 
     // Plugins
     extract_lat_lng: plugins::ExtractLatLng,
@@ -43,11 +45,12 @@ impl App {
         let mut wtxn = env.write_txn().unwrap();
         let database: Database = env.create_database(&mut wtxn, None).unwrap();
         wtxn.commit().unwrap();
-        let mut db = Writer::new(database);
+        let db = Writer::new(database);
         // db.threshold = 4;
 
-        let insert_into_database = plugins::InsertIntoDatabase::new(env.clone(), db.clone());
-        let mut polygon_filtering = plugins::PolygonFiltering::new(env.clone(), db.clone());
+        let runner = Runner::new(env.clone(), db.clone());
+        let insert_into_database = plugins::InsertIntoDatabase::new(runner.clone());
+        let mut polygon_filtering = plugins::PolygonFiltering::new(runner.clone());
         polygon_filtering.in_creation = insert_into_database.disabled.clone();
 
         Self {
@@ -55,11 +58,12 @@ impl App {
             map_memory: MapMemory::default(),
             extract_lat_lng: plugins::ExtractLatLng::default(),
             insert_into_database,
-            display_db_content: plugins::DisplayDbContent::new(env.clone(), db.clone()),
+            display_db_content: plugins::DisplayDbContent::new(runner.clone()),
             polygon_filtering,
             env,
             db,
             temp_dir,
+            runner,
         }
     }
 
@@ -102,7 +106,7 @@ impl App {
                 .store(display_db_cells, Ordering::Relaxed);
         }
         let in_creation = self.polygon_filtering.in_creation.load(Ordering::Relaxed);
-        let no_polygon = self.polygon_filtering.polygon_points.lock().len() <= 2;
+        let no_polygon = self.runner.polygon_filter.lock().len() <= 2;
         #[allow(clippy::collapsible_if)]
         if !in_creation && no_polygon {
             if ui.button("Create polygon").clicked() {
@@ -112,34 +116,32 @@ impl App {
             }
         } else if !in_creation && !no_polygon {
             if ui.button("Deletet polygon").clicked() {
-                self.polygon_filtering.polygon_points.lock().clear();
+                self.runner.polygon_filter.lock().clear();
             }
         } else if in_creation && no_polygon {
             if ui.button("Cancel").clicked() {
                 self.polygon_filtering
                     .in_creation
                     .store(false, Ordering::Relaxed);
-                self.polygon_filtering.polygon_points.lock().clear();
+                self.runner.polygon_filter.lock().clear();
             }
             if ui.button("Remove last point").clicked() {
-                self.polygon_filtering.polygon_points.lock().pop();
+                self.runner.polygon_filter.lock().pop();
             }
         } else if in_creation {
             if ui.button("Finish").clicked() {
                 self.polygon_filtering
                     .in_creation
                     .store(false, Ordering::Relaxed);
-                let mut polygon = self.polygon_filtering.polygon_points.lock();
+                let mut polygon = self.runner.polygon_filter.lock();
                 let first = *polygon.first().unwrap();
                 polygon.push(first);
+                self.runner.wake_up.signal();
             }
             if ui.button("Remove last point").clicked() {
-                self.polygon_filtering.polygon_points.lock().pop();
+                self.runner.polygon_filter.lock().pop();
             }
         }
-        let rtxn = self.env.read_txn().unwrap();
-        let stats = self.db.stats(&rtxn).unwrap();
-        dbg!(stats);
     }
 }
 

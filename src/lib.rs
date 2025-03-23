@@ -284,6 +284,7 @@ impl Writer {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 pub enum FilteringStep {
     NotPresentInDB,
     OutsideOfShape,
@@ -292,7 +293,7 @@ pub enum FilteringStep {
     DeepDive,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Stats {
     pub total_cells: usize,
     pub total_items: usize,

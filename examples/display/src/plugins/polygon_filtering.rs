@@ -3,30 +3,28 @@ use std::sync::{
     Arc,
 };
 
-use cellulite::{FilteringStep, Writer};
-use egui::{epaint::PathStroke, mutex::Mutex, Color32, Pos2, Vec2};
+use cellulite::FilteringStep;
+use egui::{epaint::PathStroke, Color32, Pos2, Vec2};
 use geo_types::{Coord, LineString, Polygon};
-use heed::Env;
 use walkers::{Plugin, Position};
 
-use crate::utils::{display_cell, project_line_string};
+use crate::{
+    runner::Runner,
+    utils::{display_cell, project_line_string},
+};
 
 /// Plugin used to create or delete a polygon used to select a subset of points
 #[derive(Clone)]
 pub struct PolygonFiltering {
-    pub polygon_points: Arc<Mutex<Vec<Coord<f64>>>>,
     pub in_creation: Arc<AtomicBool>,
-    env: Env,
-    db: Writer,
+    runner: Runner,
 }
 
 impl PolygonFiltering {
-    pub fn new(env: Env, db: Writer) -> Self {
+    pub fn new(runner: Runner) -> Self {
         PolygonFiltering {
-            polygon_points: Arc::default(),
+            runner,
             in_creation: Arc::default(),
-            env,
-            db,
         }
     }
 }
@@ -39,7 +37,7 @@ impl Plugin for PolygonFiltering {
         projector: &walkers::Projector,
     ) {
         let painter = ui.painter();
-        let mut line = self.polygon_points.lock();
+        let mut line = self.runner.polygon_filter.lock();
         let in_creation = self.in_creation.load(Ordering::Relaxed);
         let mut to_display = line.clone();
 
@@ -77,18 +75,9 @@ impl Plugin for PolygonFiltering {
         // If we have a polygon + it's finished we retrieve the points it contains and display them
         if to_display.len() >= 3 && !in_creation {
             let polygon = Polygon::new(LineString(to_display), Vec::new());
-            let rtxn = self.env.read_txn().unwrap();
-            let now = std::time::Instant::now();
-            let mut steps = Vec::new();
-            let results = self
-                .db
-                .in_shape(&rtxn, polygon, &mut |step| steps.push(step))
-                .unwrap();
-            println!("Found {} items in {:?}", results.len(), now.elapsed());
 
             let size = 8.0;
-            for item in results {
-                let (lat, lng) = self.db.item(&rtxn, item).unwrap().unwrap();
+            for (lat, lng) in self.runner.points_matched.lock().iter().copied() {
                 let pos = projector.project(Position::new(lng, lat));
 
                 painter.line(
@@ -120,15 +109,17 @@ impl Plugin for PolygonFiltering {
                 );
             }
 
-            for (action, cell) in steps {
-                let color = match action {
-                    FilteringStep::NotPresentInDB => Color32::BLACK,
-                    FilteringStep::OutsideOfShape => Color32::RED,
-                    FilteringStep::Returned => Color32::GREEN,
-                    FilteringStep::RequireDoubleCheck => Color32::YELLOW,
-                    FilteringStep::DeepDive => Color32::BLUE,
-                };
-                display_cell(projector, painter, cell, color);
+            if let Some(stats) = self.runner.filter_stats.lock().as_ref() {
+                for (action, cell) in stats.cell_explored.iter().copied() {
+                    let color = match action {
+                        FilteringStep::NotPresentInDB => Color32::BLACK,
+                        FilteringStep::OutsideOfShape => Color32::RED,
+                        FilteringStep::Returned => Color32::GREEN,
+                        FilteringStep::RequireDoubleCheck => Color32::YELLOW,
+                        FilteringStep::DeepDive => Color32::BLUE,
+                    };
+                    display_cell(projector, painter, cell, color);
+                }
             }
         }
     }
