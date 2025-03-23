@@ -98,7 +98,7 @@ impl Plugin for PolygonFiltering {
                             y: pos.y + size,
                         },
                     ],
-                    PathStroke::new(4.0, Color32::GREEN),
+                    PathStroke::new(4.0, Color32::DARK_GREEN),
                 );
 
                 painter.line(
@@ -112,7 +112,7 @@ impl Plugin for PolygonFiltering {
                             y: pos.y,
                         },
                     ],
-                    PathStroke::new(4.0, Color32::GREEN),
+                    PathStroke::new(4.0, Color32::DARK_GREEN),
                 );
             }
         }

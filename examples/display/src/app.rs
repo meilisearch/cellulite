@@ -44,7 +44,7 @@ impl App {
         let database: Database = env.create_database(&mut wtxn, None).unwrap();
         wtxn.commit().unwrap();
         let mut db = Writer::new(database);
-        db.threshold = 4;
+        // db.threshold = 4;
 
         let insert_into_database = plugins::InsertIntoDatabase::new(env.clone(), db.clone());
         let mut polygon_filtering = plugins::PolygonFiltering::new(env.clone(), db.clone());
