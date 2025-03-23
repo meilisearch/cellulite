@@ -176,7 +176,12 @@ impl Writer {
     //  2.2 Otherwise:
     //   - If the cell is a leaf => iterate over all of its point and add the one that fits in the shape to the result
     //   - Otherwise, increase the precision and iterate on the range of cells => repeat step 2
-    pub fn in_shape(&self, rtxn: &RoTxn, polygon: Polygon) -> Result<RoaringBitmap> {
+    pub fn in_shape(
+        &self,
+        rtxn: &RoTxn,
+        polygon: Polygon,
+        inspector: &mut dyn FnMut((FilteringStep, CellIndex)),
+    ) -> Result<RoaringBitmap> {
         let mut tiler = TilerBuilder::new(Resolution::Zero)
             .containment_mode(ContainmentMode::Covers)
             .build();
@@ -188,6 +193,7 @@ impl Writer {
 
         while let Some(cell) = to_explore.pop() {
             let Some(items) = self.cell_db().get(rtxn, &Key::Cell(cell))? else {
+                (inspector)((FilteringStep::NotPresentInDB, cell));
                 continue;
             };
 
@@ -195,16 +201,22 @@ impl Writer {
             let cell_polygon = h3o::geom::dissolve(Some(cell)).unwrap().0;
             let cell_polygon = &cell_polygon[0];
             if polygon.contains(cell_polygon) {
+                (inspector)((FilteringStep::Returned, cell));
                 ret |= items;
             } else if polygon.intersects(cell_polygon) {
                 let resolution = cell.resolution();
                 if items.len() < self.threshold || resolution == Resolution::Fifteen {
+                    (inspector)((FilteringStep::RequireDoubleCheck, cell));
                     double_check |= items;
                 } else {
+                    (inspector)((FilteringStep::DeepDive, cell));
                     // unwrap is safe since we checked we're not at the last resolution right above
                     to_explore.extend(cell.children(resolution.succ().unwrap()));
                 }
-            } // else: we can ignore the cell, it's not part of our shape
+            } else {
+                // else: we can ignore the cell, it's not part of our shape
+                (inspector)((FilteringStep::OutsideOfShape, cell));
+            }
         }
 
         for item in double_check {
@@ -270,6 +282,14 @@ impl Writer {
             .take(limit as usize)
             .collect())
     }
+}
+
+pub enum FilteringStep {
+    NotPresentInDB,
+    OutsideOfShape,
+    Returned,
+    RequireDoubleCheck,
+    DeepDive,
 }
 
 #[derive(Debug, Default)]
