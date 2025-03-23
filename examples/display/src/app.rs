@@ -20,7 +20,7 @@ pub struct App {
     db: Writer,
     #[allow(dead_code)]
     temp_dir: Option<tempfile::TempDir>,
-
+    #[allow(dead_code)]
     runner: Runner,
 
     // Plugins
@@ -105,43 +105,7 @@ impl App {
                 .display_db_cells
                 .store(display_db_cells, Ordering::Relaxed);
         }
-        let in_creation = self.polygon_filtering.in_creation.load(Ordering::Relaxed);
-        let no_polygon = self.runner.polygon_filter.lock().len() <= 2;
-        #[allow(clippy::collapsible_if)]
-        if !in_creation && no_polygon {
-            if ui.button("Create polygon").clicked() {
-                self.polygon_filtering
-                    .in_creation
-                    .store(true, Ordering::Relaxed);
-            }
-        } else if !in_creation && !no_polygon {
-            if ui.button("Deletet polygon").clicked() {
-                self.runner.polygon_filter.lock().clear();
-            }
-        } else if in_creation && no_polygon {
-            if ui.button("Cancel").clicked() {
-                self.polygon_filtering
-                    .in_creation
-                    .store(false, Ordering::Relaxed);
-                self.runner.polygon_filter.lock().clear();
-            }
-            if ui.button("Remove last point").clicked() {
-                self.runner.polygon_filter.lock().pop();
-            }
-        } else if in_creation {
-            if ui.button("Finish").clicked() {
-                self.polygon_filtering
-                    .in_creation
-                    .store(false, Ordering::Relaxed);
-                let mut polygon = self.runner.polygon_filter.lock();
-                let first = *polygon.first().unwrap();
-                polygon.push(first);
-                self.runner.wake_up.signal();
-            }
-            if ui.button("Remove last point").clicked() {
-                self.runner.polygon_filter.lock().pop();
-            }
-        }
+        self.polygon_filtering.ui(ui);
     }
 }
 

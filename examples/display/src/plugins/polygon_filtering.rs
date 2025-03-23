@@ -1,11 +1,11 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 
 use cellulite::FilteringStep;
-use egui::{epaint::PathStroke, Color32, Pos2, Vec2};
-use geo_types::{Coord, LineString, Polygon};
+use egui::{epaint::PathStroke, Color32, Pos2, RichText, Ui, Vec2};
+use geo_types::Coord;
 use walkers::{Plugin, Position};
 
 use crate::{
@@ -17,6 +17,7 @@ use crate::{
 #[derive(Clone)]
 pub struct PolygonFiltering {
     pub in_creation: Arc<AtomicBool>,
+    pub display_filtering_details: Arc<AtomicUsize>,
     runner: Runner,
 }
 
@@ -25,7 +26,76 @@ impl PolygonFiltering {
         PolygonFiltering {
             runner,
             in_creation: Arc::default(),
+            display_filtering_details: Arc::default(),
         }
+    }
+
+    pub fn ui(&self, ui: &mut Ui) {
+        ui.collapsing(RichText::new("Filter").heading(), |ui| {
+            let in_creation = self.in_creation.load(Ordering::Relaxed);
+            let no_polygon = self.runner.polygon_filter.lock().len() <= 2;
+            #[allow(clippy::collapsible_if)]
+            if !in_creation && no_polygon {
+                if ui.button("Create polygon").clicked() {
+                    self.in_creation.store(true, Ordering::Relaxed);
+                }
+            } else if !in_creation && !no_polygon {
+                if ui.button("Delete polygon").clicked() {
+                    self.runner.polygon_filter.lock().clear();
+                    *self.runner.filter_stats.lock() = None;
+                }
+            } else if in_creation && no_polygon {
+                if ui.button("Cancel").clicked() {
+                    self.in_creation.store(false, Ordering::Relaxed);
+                    self.runner.polygon_filter.lock().clear();
+                    *self.runner.filter_stats.lock() = None;
+                }
+                if ui.button("Remove last point").clicked() {
+                    self.runner.polygon_filter.lock().pop();
+                }
+            } else if in_creation {
+                if ui.button("Finish").clicked() {
+                    self.in_creation.store(false, Ordering::Relaxed);
+                    let mut polygon = self.runner.polygon_filter.lock();
+                    let first = *polygon.first().unwrap();
+                    polygon.push(first);
+                    self.runner.wake_up.signal();
+                }
+                if ui.button("Remove last point").clicked() {
+                    self.runner.polygon_filter.lock().pop();
+                }
+            }
+            let stats = self.runner.filter_stats.lock();
+            if let Some(stats) = stats.as_ref() {
+                ui.heading("Result");
+                ui.label(format!("Matched {} points", stats.nb_points_matched));
+                ui.label(format!(
+                    "Polygon contains {} points",
+                    stats.shape_contains_n_points
+                ));
+                ui.label(format!("Processed in {:?}", stats.processed_in));
+                let mut display_filtering_details =
+                    self.display_filtering_details.load(Ordering::Acquire);
+                ui.add(
+                    egui::Slider::new(
+                        &mut display_filtering_details,
+                        0..=(stats.cell_explored.len() - 1),
+                    )
+                    .text("Filtering details")
+                    .smart_aim(false),
+                );
+                ui.vertical(|ui| {
+                    if ui.small_button("+").clicked() {
+                        display_filtering_details += 1;
+                    }
+                    if ui.small_button("-").clicked() {
+                        display_filtering_details -= 1;
+                    }
+                });
+                self.display_filtering_details
+                    .store(display_filtering_details, Ordering::Release);
+            }
+        });
     }
 }
 
@@ -74,8 +144,6 @@ impl Plugin for PolygonFiltering {
 
         // If we have a polygon + it's finished we retrieve the points it contains and display them
         if to_display.len() >= 3 && !in_creation {
-            let polygon = Polygon::new(LineString(to_display), Vec::new());
-
             let size = 8.0;
             for (lat, lng) in self.runner.points_matched.lock().iter().copied() {
                 let pos = projector.project(Position::new(lng, lat));
@@ -109,16 +177,24 @@ impl Plugin for PolygonFiltering {
                 );
             }
 
-            if let Some(stats) = self.runner.filter_stats.lock().as_ref() {
-                for (action, cell) in stats.cell_explored.iter().copied() {
-                    let color = match action {
-                        FilteringStep::NotPresentInDB => Color32::BLACK,
-                        FilteringStep::OutsideOfShape => Color32::RED,
-                        FilteringStep::Returned => Color32::GREEN,
-                        FilteringStep::RequireDoubleCheck => Color32::YELLOW,
-                        FilteringStep::DeepDive => Color32::BLUE,
-                    };
-                    display_cell(projector, painter, cell, color);
+            let display_filtering_details = self.display_filtering_details.load(Ordering::Relaxed);
+            if display_filtering_details > 0 {
+                if let Some(stats) = self.runner.filter_stats.lock().as_ref() {
+                    for (action, cell) in stats
+                        .cell_explored
+                        .iter()
+                        .take(display_filtering_details)
+                        .copied()
+                    {
+                        let color = match action {
+                            FilteringStep::NotPresentInDB => Color32::BLACK,
+                            FilteringStep::OutsideOfShape => Color32::RED,
+                            FilteringStep::Returned => Color32::GREEN,
+                            FilteringStep::RequireDoubleCheck => Color32::YELLOW,
+                            FilteringStep::DeepDive => Color32::BLUE,
+                        };
+                        display_cell(projector, painter, cell, color);
+                    }
                 }
             }
         }
