@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use egui::{epaint::PathStroke, Color32, Vec2};
+use geo::{Contains, Point, Rect};
 use walkers::{Plugin, Position};
 
 use crate::{runner::Runner, utils::display_cell};
@@ -33,6 +34,15 @@ impl Plugin for DisplayDbContent {
         _response: &egui::Response,
         projector: &walkers::Projector,
     ) {
+        let x = ui.available_width();
+        let y = ui.available_height();
+        let top_left = projector.unproject(Vec2 { x: 0.0, y: 0.0 });
+        let bottom_right = projector.unproject(Vec2 { x, y });
+        let displayed_rect = Rect::new(
+            Point::new(top_left.x(), top_left.y()),
+            Point::new(bottom_right.x(), bottom_right.y()),
+        );
+
         let painter = ui.painter();
 
         if self.display_db_cells.load(Ordering::Relaxed) {
@@ -51,6 +61,9 @@ impl Plugin for DisplayDbContent {
 
         if self.display_items.load(Ordering::Relaxed) {
             for coord in self.runner.all_items.lock().iter().copied() {
+                if !displayed_rect.contains(&Point::new(coord.lng(), coord.lat())) {
+                    continue;
+                }
                 let center = projector.project(Position::new(coord.lng(), coord.lat()));
                 let size = 8.0;
                 painter.line(
