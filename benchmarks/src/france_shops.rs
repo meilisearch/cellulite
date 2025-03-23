@@ -1,4 +1,4 @@
-use geo::{Transform, algorithm::proj::Proj};
+use geo::algorithm::proj::Proj;
 use std::io::BufReader;
 
 use flate2::bufread::GzDecoder;
