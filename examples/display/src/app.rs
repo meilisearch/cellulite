@@ -137,6 +137,9 @@ impl App {
                 self.polygon_filtering.polygon_points.lock().pop();
             }
         }
+        let rtxn = self.env.read_txn().unwrap();
+        let stats = self.db.stats(&rtxn).unwrap();
+        dbg!(stats);
     }
 }
 

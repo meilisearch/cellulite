@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use ::roaring::RoaringBitmap;
 use geo::{Contains, Coord, Intersects};
 use geo_types::Polygon;
@@ -104,6 +106,24 @@ impl Writer {
             RoaringBitmap::from_sorted_iter(Some(item)).unwrap(),
             Resolution::Zero,
         )
+    }
+
+    pub fn stats(&self, rtxn: &RoTxn) -> Result<Stats> {
+        let total_items = self.items(rtxn)?.count();
+        let mut total_cells = 0;
+        let mut cells_by_resolution = BTreeMap::new();
+
+        for entry in self.inner_db_cells(rtxn)? {
+            let (cell, _) = entry?;
+            total_cells += 1;
+            *cells_by_resolution.entry(cell.resolution()).or_default() += 1;
+        }
+
+        Ok(Stats {
+            total_cells,
+            total_items,
+            cells_by_resolution,
+        })
     }
 
     fn item_db(&self) -> heed::Database<KeyCodec, CellIndexCodec> {
@@ -250,4 +270,11 @@ impl Writer {
             .take(limit as usize)
             .collect())
     }
+}
+
+#[derive(Debug, Default)]
+pub struct Stats {
+    pub total_cells: usize,
+    pub total_items: usize,
+    pub cells_by_resolution: BTreeMap<Resolution, usize>,
 }
