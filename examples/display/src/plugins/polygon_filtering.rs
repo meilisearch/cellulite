@@ -1,11 +1,12 @@
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     Arc,
 };
 
 use cellulite::FilteringStep;
 use egui::{epaint::PathStroke, Color32, Pos2, RichText, Ui, Vec2};
 use geo_types::Coord;
+use h3o::Resolution;
 use walkers::{Plugin, Position};
 
 use crate::{
@@ -18,6 +19,7 @@ use crate::{
 pub struct PolygonFiltering {
     pub in_creation: Arc<AtomicBool>,
     pub display_filtering_details: Arc<AtomicUsize>,
+    pub increase_resolution_details: Arc<AtomicU8>,
     runner: Runner,
 }
 
@@ -27,6 +29,7 @@ impl PolygonFiltering {
             runner,
             in_creation: Arc::default(),
             display_filtering_details: Arc::default(),
+            increase_resolution_details: Arc::default(),
         }
     }
 
@@ -94,6 +97,27 @@ impl PolygonFiltering {
                 });
                 self.display_filtering_details
                     .store(display_filtering_details, Ordering::Release);
+
+                let mut increase_resolution_details =
+                    self.increase_resolution_details.load(Ordering::Acquire);
+                ui.add(
+                    egui::Slider::new(
+                        &mut increase_resolution_details,
+                        Resolution::Zero as u8..=Resolution::Fifteen as u8,
+                    )
+                    .text("Hide higher resolution")
+                    .smart_aim(false),
+                );
+                ui.vertical(|ui| {
+                    if ui.small_button("+").clicked() {
+                        increase_resolution_details += 1;
+                    }
+                    if ui.small_button("-").clicked() {
+                        increase_resolution_details -= 1;
+                    }
+                });
+                self.increase_resolution_details
+                    .store(increase_resolution_details, Ordering::Release);
             }
         });
     }
@@ -178,11 +202,14 @@ impl Plugin for PolygonFiltering {
             }
 
             let display_filtering_details = self.display_filtering_details.load(Ordering::Relaxed);
+            let increase_resolution_details =
+                self.increase_resolution_details.load(Ordering::Relaxed);
             if display_filtering_details > 0 {
                 if let Some(stats) = self.runner.filter_stats.lock().as_ref() {
                     for (action, cell) in stats
                         .cell_explored
                         .iter()
+                        .filter(|(_, cell)| cell.resolution() as u8 >= increase_resolution_details)
                         .take(display_filtering_details)
                         .copied()
                     {
