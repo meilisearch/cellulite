@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use ::roaring::RoaringBitmap;
 use geo::{Contains, Coord, Intersects};
@@ -208,9 +208,9 @@ impl Writer {
 
         let mut ret = RoaringBitmap::new();
         let mut double_check = RoaringBitmap::new();
-        let mut to_explore: Vec<_> = tiler.into_coverage().collect();
+        let mut to_explore: VecDeque<_> = tiler.into_coverage().collect();
 
-        while let Some(cell) = to_explore.pop() {
+        while let Some(cell) = to_explore.pop_front() {
             let Some(items) = self.cell_db().get(rtxn, &Key::Cell(cell))? else {
                 (inspector)((FilteringStep::NotPresentInDB, cell));
                 continue;

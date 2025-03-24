@@ -79,7 +79,7 @@ impl PolygonFiltering {
                 ui.add(
                     egui::Slider::new(
                         &mut display_filtering_details,
-                        0..=(stats.cell_explored.len() - 1),
+                        0..=stats.cell_explored.len(),
                     )
                     .text("Filtering details")
                     .smart_aim(false),
