@@ -108,6 +108,21 @@ impl Writer {
         )
     }
 
+    pub fn add_shape(
+        &self,
+        wtxn: &mut RwTxn,
+        item: ItemId,
+        polygon: Vec<(f64, f64)>,
+    ) -> Result<()> {
+        let lat_lng_cell = LatLng::new(polygon[0].0, polygon[0].1)?;
+        self.shape_db().remap_data_type::<CellIndexCodec>().put(
+            wtxn,
+            &Key::Item(item),
+            &lat_lng_cell.to_cell(Resolution::Fifteen),
+        )?;
+        Ok(())
+    }
+
     pub fn stats(&self, rtxn: &RoTxn) -> Result<Stats> {
         let total_items = self.items(rtxn)?.count();
         let mut total_cells = 0;
@@ -131,6 +146,10 @@ impl Writer {
     }
 
     fn cell_db(&self) -> heed::Database<KeyCodec, RoaringBitmapCodec> {
+        self.db.remap_data_type()
+    }
+
+    fn shape_db(&self) -> heed::Database<KeyCodec, CellIndexCodec> {
         self.db.remap_data_type()
     }
 
