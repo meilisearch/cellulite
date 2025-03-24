@@ -22,6 +22,11 @@ impl<'a> heed::BytesEncode<'a> for KeyCodec {
                 let output: u64 = (*cell).into();
                 ret.extend_from_slice(&output.to_be_bytes());
             }
+            Key::Shape(item) => {
+                ret = Vec::with_capacity(size_of::<KeyVariant>() + size_of_val(item));
+                ret.push(KeyVariant::Shape as u8);
+                ret.extend_from_slice(&item.to_be_bytes());
+            }
         }
         Ok(ret.into())
     }
@@ -45,6 +50,10 @@ impl heed::BytesDecode<'_> for KeyCodec {
                     unsafe { std::mem::transmute::<u64, CellIndex>(cell) },
                 )
             }
+            v if v == KeyVariant::Shape as u8 => {
+                let item = BigEndian::read_u32(bytes);
+                Key::Shape(item)
+            }
             _ => unreachable!(),
         };
 
@@ -55,6 +64,7 @@ impl heed::BytesDecode<'_> for KeyCodec {
 pub enum Key {
     Item(ItemId),
     Cell(CellIndex),
+    Shape(ItemId),
 }
 
 #[repr(u8)]
@@ -62,6 +72,7 @@ pub enum Key {
 pub enum KeyVariant {
     Item = 0,
     Cell = 1,
+    Shape = 2,
 }
 
 pub struct KeyPrefixVariantCodec;
