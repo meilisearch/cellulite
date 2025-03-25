@@ -61,6 +61,7 @@ impl Runner {
 
     pub fn add_point(&self, coord: LatLng) {
         self.to_insert.lock().push(coord);
+        self.all_items.lock().push(coord);
         self.wake_up.signal();
     }
 
