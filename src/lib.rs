@@ -217,8 +217,9 @@ impl Writer {
             };
 
             // Can't fail since we specified only one cell
-            let cell_polygon = h3o::geom::dissolve(Some(cell)).unwrap().0;
-            let cell_polygon = &cell_polygon[0];
+            let solvent = h3o::geom::SolventBuilder::new().build();
+            let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
+            let cell_polygon = &cell_polygon.0[0];
             if polygon.contains(cell_polygon) {
                 (inspector)((FilteringStep::Returned, cell));
                 ret |= items;
