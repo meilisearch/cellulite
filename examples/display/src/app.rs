@@ -1,9 +1,5 @@
-use std::sync::atomic::Ordering;
-
 use cellulite::{Database, Writer};
 use egui::{CentralPanel, RichText, Ui};
-use egui_double_slider::DoubleSlider;
-use h3o::Resolution;
 use heed::{Env, EnvOpenOptions};
 use tempfile::TempDir;
 use walkers::{lon_lat, sources::OpenStreetMap, HttpTiles, Map, MapMemory};
@@ -26,7 +22,7 @@ pub struct App {
     runner: Runner,
 
     // Plugins
-    extract_lat_lng: plugins::ExtractLatLng,
+    extract_lat_lng: plugins::ExtractMousePos,
     insert_into_database: plugins::InsertIntoDatabase,
     display_db_content: plugins::DisplayDbContent,
     polygon_filtering: plugins::PolygonFiltering,
@@ -58,7 +54,7 @@ impl App {
         Self {
             tiles: HttpTiles::new(OpenStreetMap, cc.egui_ctx.clone()),
             map_memory: MapMemory::default(),
-            extract_lat_lng: plugins::ExtractLatLng::default(),
+            extract_lat_lng: plugins::ExtractMousePos::default(),
             insert_into_database,
             display_db_content: plugins::DisplayDbContent::new(runner.clone()),
             polygon_filtering,
@@ -76,67 +72,11 @@ impl App {
 
     fn debug(&self, ui: &mut Ui) {
         ui.collapsing(RichText::new("Debug").heading(), |ui| {
-            ui.label(format!(
-                "mouse: {:.5},{:.5}",
-                self.extract_lat_lng.current_lat.load(Ordering::Relaxed),
-                self.extract_lat_lng.current_lng.load(Ordering::Relaxed)
-            ));
-            ui.label(format!(
-                "clicked: {:.5},{:.5}",
-                self.extract_lat_lng.clicked_lat.load(Ordering::Relaxed),
-                self.extract_lat_lng.clicked_lng.load(Ordering::Relaxed)
-            ));
-            if ui.button("Insert a shit ton of random points").clicked() {
+            self.extract_lat_lng.ui(ui);
+            if ui.button("Insert 1000 random points").clicked() {
                 self.insert_into_database.insert_random_items(1000);
             }
-            let mut display_items = self
-                .display_db_content
-                .display_items
-                .load(Ordering::Relaxed);
-            if ui
-                .toggle_value(&mut display_items, "Display items")
-                .clicked()
-            {
-                self.display_db_content
-                    .display_items
-                    .store(display_items, Ordering::Relaxed);
-            }
-            let mut display_db_cells = self
-                .display_db_content
-                .display_db_cells
-                .load(Ordering::Relaxed);
-            if ui
-                .toggle_value(&mut display_db_cells, "Display DB cells")
-                .clicked()
-            {
-                self.display_db_content
-                    .display_db_cells
-                    .store(display_db_cells, Ordering::Relaxed);
-            }
-            if display_db_cells {
-                let mut display_db_cells_min = self
-                    .display_db_content
-                    .display_db_cells_min_res
-                    .load(Ordering::Relaxed);
-                let mut display_db_cells_max = self
-                    .display_db_content
-                    .display_db_cells_max_res
-                    .load(Ordering::Relaxed);
-                ui.label(format!(
-                    "Cells resolution between {display_db_cells_min} and {display_db_cells_max}"
-                ));
-                ui.add(DoubleSlider::new(
-                    &mut display_db_cells_min,
-                    &mut display_db_cells_max,
-                    Resolution::Zero as usize..=Resolution::Fifteen as usize,
-                ));
-                self.display_db_content
-                    .display_db_cells_min_res
-                    .store(display_db_cells_min, Ordering::Relaxed);
-                self.display_db_content
-                    .display_db_cells_max_res
-                    .store(display_db_cells_max, Ordering::Relaxed);
-            }
+            self.display_db_content.ui(ui);
         });
     }
 }

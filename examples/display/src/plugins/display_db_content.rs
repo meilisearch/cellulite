@@ -3,8 +3,10 @@ use std::sync::{
     Arc,
 };
 
-use egui::{epaint::PathStroke, Color32, Vec2};
+use egui::{epaint::PathStroke, Color32, Ui, Vec2};
+use egui_double_slider::DoubleSlider;
 use geo::{Contains, Point, Rect};
+use h3o::Resolution;
 use walkers::{Plugin, Position};
 
 use crate::{runner::Runner, utils::display_cell};
@@ -22,11 +24,45 @@ pub struct DisplayDbContent {
 impl DisplayDbContent {
     pub fn new(runner: Runner) -> Self {
         DisplayDbContent {
-            display_db_cells: Arc::new(AtomicBool::new(true)),
+            display_db_cells: Arc::default(),
             display_db_cells_min_res: Arc::new(AtomicUsize::from(0)),
             display_db_cells_max_res: Arc::new(AtomicUsize::from(16)),
-            display_items: Arc::new(AtomicBool::new(true)),
+            display_items: Arc::default(),
             runner,
+        }
+    }
+
+    pub fn ui(&self, ui: &mut Ui) {
+        let mut display_items = self.display_items.load(Ordering::Relaxed);
+        if ui
+            .toggle_value(&mut display_items, "Display items")
+            .clicked()
+        {
+            self.display_items.store(display_items, Ordering::Relaxed);
+        }
+        let mut display_db_cells = self.display_db_cells.load(Ordering::Relaxed);
+        if ui
+            .toggle_value(&mut display_db_cells, "Display DB cells")
+            .clicked()
+        {
+            self.display_db_cells
+                .store(display_db_cells, Ordering::Relaxed);
+        }
+        if display_db_cells {
+            let mut display_db_cells_min = self.display_db_cells_min_res.load(Ordering::Relaxed);
+            let mut display_db_cells_max = self.display_db_cells_max_res.load(Ordering::Relaxed);
+            ui.label(format!(
+                "Cells resolution between {display_db_cells_min} and {display_db_cells_max}"
+            ));
+            ui.add(DoubleSlider::new(
+                &mut display_db_cells_min,
+                &mut display_db_cells_max,
+                Resolution::Zero as usize..=Resolution::Fifteen as usize,
+            ));
+            self.display_db_cells_min_res
+                .store(display_db_cells_min, Ordering::Relaxed);
+            self.display_db_cells_max_res
+                .store(display_db_cells_max, Ordering::Relaxed);
         }
     }
 }
