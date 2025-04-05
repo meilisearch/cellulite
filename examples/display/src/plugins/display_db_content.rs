@@ -1,5 +1,5 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 
@@ -13,6 +13,8 @@ use crate::{runner::Runner, utils::display_cell};
 #[derive(Clone)]
 pub struct DisplayDbContent {
     pub display_db_cells: Arc<AtomicBool>,
+    pub display_db_cells_min_level: Arc<AtomicUsize>,
+    pub display_db_cells_max_level: Arc<AtomicUsize>,
     pub display_items: Arc<AtomicBool>,
     runner: Runner,
 }
@@ -21,6 +23,8 @@ impl DisplayDbContent {
     pub fn new(runner: Runner) -> Self {
         DisplayDbContent {
             display_db_cells: Arc::new(AtomicBool::new(true)),
+            display_db_cells_min_level: Arc::new(AtomicUsize::from(0)),
+            display_db_cells_max_level: Arc::new(AtomicUsize::from(16)),
             display_items: Arc::new(AtomicBool::new(true)),
             runner,
         }
@@ -46,16 +50,21 @@ impl Plugin for DisplayDbContent {
         let painter = ui.painter();
 
         if self.display_db_cells.load(Ordering::Relaxed) {
+            let min = self.display_db_cells_min_level.load(Ordering::Relaxed);
+            let max = self.display_db_cells_max_level.load(Ordering::Relaxed);
+
             for (cell, nb_points) in self.runner.all_db_cells.lock().iter().copied() {
-                display_cell(
-                    projector,
-                    painter,
-                    cell,
-                    Color32::BLUE.lerp_to_gamma(
-                        Color32::RED,
-                        nb_points as f32 / self.runner.db.threshold as f32,
-                    ),
-                );
+                if (min..max).contains(&(cell.resolution() as usize)) {
+                    display_cell(
+                        projector,
+                        painter,
+                        cell,
+                        Color32::BLUE.lerp_to_gamma(
+                            Color32::RED,
+                            nb_points as f32 / self.runner.db.threshold as f32,
+                        ),
+                    );
+                }
             }
         }
 
