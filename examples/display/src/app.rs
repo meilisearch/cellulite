@@ -116,11 +116,11 @@ impl App {
             if display_db_cells {
                 let mut display_db_cells_min = self
                     .display_db_content
-                    .display_db_cells_min_level
+                    .display_db_cells_min_res
                     .load(Ordering::Relaxed);
                 let mut display_db_cells_max = self
                     .display_db_content
-                    .display_db_cells_max_level
+                    .display_db_cells_max_res
                     .load(Ordering::Relaxed);
                 ui.label(format!(
                     "Cells resolution between {display_db_cells_min} and {display_db_cells_max}"
@@ -131,10 +131,10 @@ impl App {
                     Resolution::Zero as usize..=Resolution::Fifteen as usize,
                 ));
                 self.display_db_content
-                    .display_db_cells_min_level
+                    .display_db_cells_min_res
                     .store(display_db_cells_min, Ordering::Relaxed);
                 self.display_db_content
-                    .display_db_cells_max_level
+                    .display_db_cells_max_res
                     .store(display_db_cells_max, Ordering::Relaxed);
             }
         });

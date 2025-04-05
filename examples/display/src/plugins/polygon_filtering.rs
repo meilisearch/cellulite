@@ -1,10 +1,11 @@
 use std::sync::{
-    atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 
 use cellulite::FilteringStep;
 use egui::{epaint::PathStroke, Color32, Pos2, RichText, Ui, Vec2};
+use egui_double_slider::DoubleSlider;
 use geo_types::Coord;
 use h3o::Resolution;
 use walkers::{Plugin, Position};
@@ -19,7 +20,8 @@ use crate::{
 pub struct PolygonFiltering {
     pub in_creation: Arc<AtomicBool>,
     pub display_filtering_details: Arc<AtomicUsize>,
-    pub increase_resolution_details: Arc<AtomicU8>,
+    pub display_details_min_res: Arc<AtomicUsize>,
+    pub display_details_max_res: Arc<AtomicUsize>,
     runner: Runner,
 }
 
@@ -29,7 +31,8 @@ impl PolygonFiltering {
             runner,
             in_creation: Arc::default(),
             display_filtering_details: Arc::default(),
-            increase_resolution_details: Arc::default(),
+            display_details_min_res: Arc::new(AtomicUsize::new(0)),
+            display_details_max_res: Arc::new(AtomicUsize::new(16)),
         }
     }
 
@@ -98,26 +101,20 @@ impl PolygonFiltering {
                 self.display_filtering_details
                     .store(display_filtering_details, Ordering::Release);
 
-                let mut increase_resolution_details =
-                    self.increase_resolution_details.load(Ordering::Acquire);
-                ui.add(
-                    egui::Slider::new(
-                        &mut increase_resolution_details,
-                        Resolution::Zero as u8..=Resolution::Fifteen as u8,
-                    )
-                    .text("Hide higher resolution")
-                    .smart_aim(false),
-                );
-                ui.vertical(|ui| {
-                    if ui.small_button("+").clicked() {
-                        increase_resolution_details += 1;
-                    }
-                    if ui.small_button("-").clicked() {
-                        increase_resolution_details -= 1;
-                    }
-                });
-                self.increase_resolution_details
-                    .store(increase_resolution_details, Ordering::Release);
+                let mut display_details_min = self.display_details_min_res.load(Ordering::Relaxed);
+                let mut display_details_max = self.display_details_max_res.load(Ordering::Relaxed);
+                ui.label(format!(
+                    "Cells resolution between {display_details_min} and {display_details_max}"
+                ));
+                ui.add(DoubleSlider::new(
+                    &mut display_details_min,
+                    &mut display_details_max,
+                    Resolution::Zero as usize..=Resolution::Fifteen as usize,
+                ));
+                self.display_details_min_res
+                    .store(display_details_min, Ordering::Relaxed);
+                self.display_details_max_res
+                    .store(display_details_max, Ordering::Relaxed);
             }
         });
     }
@@ -202,15 +199,15 @@ impl Plugin for PolygonFiltering {
             }
 
             let display_filtering_details = self.display_filtering_details.load(Ordering::Relaxed);
-            let increase_resolution_details =
-                self.increase_resolution_details.load(Ordering::Relaxed);
+            let min = self.display_details_min_res.load(Ordering::Relaxed);
+            let max = self.display_details_max_res.load(Ordering::Relaxed);
             if display_filtering_details > 0 {
                 if let Some(stats) = self.runner.filter_stats.lock().as_ref() {
                     for (action, cell) in stats
                         .cell_explored
                         .iter()
-                        .filter(|(_, cell)| cell.resolution() as u8 >= increase_resolution_details)
                         .take(display_filtering_details)
+                        .filter(|(_, cell)| (min..max).contains(&(cell.resolution() as usize)))
                         .copied()
                     {
                         let color = match action {
