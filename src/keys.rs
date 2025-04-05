@@ -45,10 +45,7 @@ impl heed::BytesDecode<'_> for KeyCodec {
             }
             v if v == KeyVariant::Cell as u8 => {
                 let cell = BigEndian::read_u64(bytes);
-                Key::Cell(
-                    // safety: the cell uses a `repr(transparent)` and only contains an `u64`. But we should make a PR to make that safe
-                    unsafe { std::mem::transmute::<u64, CellIndex>(cell) },
-                )
+                Key::Cell(cell.try_into()?)
             }
             v if v == KeyVariant::Shape as u8 => {
                 let item = BigEndian::read_u32(bytes);
@@ -103,10 +100,6 @@ impl heed::BytesDecode<'_> for CellIndexCodec {
 
     fn bytes_decode(bytes: &'_ [u8]) -> Result<Self::DItem, heed::BoxedError> {
         let cell = BigEndian::read_u64(bytes);
-        Ok(
-            // safety: the cell uses a `repr(transparent)` and only contains an `u64`.
-            // TODO: But we should make a PR to make that safe, there is no performance gain in doing it this way.
-            unsafe { std::mem::transmute::<u64, CellIndex>(cell) },
-        )
+        Ok(cell.try_into()?)
     }
 }
