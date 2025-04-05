@@ -6,14 +6,23 @@ edition = "2021"
 [workspace]
 members = [ "benchmarks","examples/*"]
 
-[dependencies]
-geo = "0.29.3"
+[workspace.dependencies]
+geo = "0.30.0"
 geo-types = "0.7.15"
-h3o = { version = "0.7.1", features = ["geo"] }
+h3o = { version = "0.8.0", features = ["geo"] }
 heed = "0.22.0"
 ordered-float = "5.0.0"
 roaring = "0.10.10"
 thiserror = "2.0.12"
+
+[dependencies]
+geo = { workspace = true }
+geo-types = { workspace = true }
+h3o = { workspace = true }
+heed = { workspace = true }
+ordered-float = { workspace = true }
+roaring = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 insta = "1.42.2"

@@ -32,8 +32,10 @@ pub fn project_line_string(projector: &Projector, line: &[Coord]) -> Vec<Pos2> {
 }
 
 pub fn display_cell(projector: &Projector, painter: &Painter, cell: CellIndex, color: Color32) {
-    let polygon = h3o::geom::dissolve(Some(cell)).unwrap().0;
-    let line = project_line_string(projector, &polygon[0].exterior().0);
+    let solvent = h3o::geom::SolventBuilder::new().build();
+    let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
+    let cell_polygon = &cell_polygon.0[0];
+    let line = project_line_string(projector, &cell_polygon.exterior().0);
     painter.line(
         line,
         PathStroke::new(16.0 - cell.resolution() as u8 as f32, color),
