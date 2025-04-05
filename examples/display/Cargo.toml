@@ -17,6 +17,7 @@ eframe = { version = "0.31", default-features = false, features = [
     "wayland",       # To support Linux (and CI)
 ] }
 egui = "0.31"
+egui_double_slider = "0.7.0"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3.19.1"

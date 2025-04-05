@@ -1,7 +1,9 @@
 use std::sync::atomic::Ordering;
 
 use cellulite::{Database, Writer};
-use egui::{CentralPanel, Ui};
+use egui::{CentralPanel, RichText, Ui};
+use egui_double_slider::DoubleSlider;
+use h3o::Resolution;
 use heed::{Env, EnvOpenOptions};
 use tempfile::TempDir;
 use walkers::{lon_lat, sources::OpenStreetMap, HttpTiles, Map, MapMemory};
@@ -68,44 +70,74 @@ impl App {
     }
 
     pub fn side_panel(&self, ui: &mut Ui) {
-        ui.label(format!(
-            "mouse: {:.5},{:.5}",
-            self.extract_lat_lng.current_lat.load(Ordering::Relaxed),
-            self.extract_lat_lng.current_lng.load(Ordering::Relaxed)
-        ));
-        ui.label(format!(
-            "clicked: {:.5},{:.5}",
-            self.extract_lat_lng.clicked_lat.load(Ordering::Relaxed),
-            self.extract_lat_lng.clicked_lng.load(Ordering::Relaxed)
-        ));
-        if ui.button("Insert a shit ton of random points").clicked() {
-            self.insert_into_database.insert_random_items(1000);
-        }
-        let mut display_items = self
-            .display_db_content
-            .display_items
-            .load(Ordering::Relaxed);
-        if ui
-            .toggle_value(&mut display_items, "Display items")
-            .clicked()
-        {
-            self.display_db_content
-                .display_items
-                .store(display_items, Ordering::Relaxed);
-        }
-        let mut display_db_cells = self
-            .display_db_content
-            .display_db_cells
-            .load(Ordering::Relaxed);
-        if ui
-            .toggle_value(&mut display_db_cells, "Display DB cells")
-            .clicked()
-        {
-            self.display_db_content
-                .display_db_cells
-                .store(display_db_cells, Ordering::Relaxed);
-        }
+        self.debug(ui);
         self.polygon_filtering.ui(ui);
+    }
+
+    fn debug(&self, ui: &mut Ui) {
+        ui.collapsing(RichText::new("Debug").heading(), |ui| {
+            ui.label(format!(
+                "mouse: {:.5},{:.5}",
+                self.extract_lat_lng.current_lat.load(Ordering::Relaxed),
+                self.extract_lat_lng.current_lng.load(Ordering::Relaxed)
+            ));
+            ui.label(format!(
+                "clicked: {:.5},{:.5}",
+                self.extract_lat_lng.clicked_lat.load(Ordering::Relaxed),
+                self.extract_lat_lng.clicked_lng.load(Ordering::Relaxed)
+            ));
+            if ui.button("Insert a shit ton of random points").clicked() {
+                self.insert_into_database.insert_random_items(1000);
+            }
+            let mut display_items = self
+                .display_db_content
+                .display_items
+                .load(Ordering::Relaxed);
+            if ui
+                .toggle_value(&mut display_items, "Display items")
+                .clicked()
+            {
+                self.display_db_content
+                    .display_items
+                    .store(display_items, Ordering::Relaxed);
+            }
+            let mut display_db_cells = self
+                .display_db_content
+                .display_db_cells
+                .load(Ordering::Relaxed);
+            if ui
+                .toggle_value(&mut display_db_cells, "Display DB cells")
+                .clicked()
+            {
+                self.display_db_content
+                    .display_db_cells
+                    .store(display_db_cells, Ordering::Relaxed);
+            }
+            if display_db_cells {
+                let mut display_db_cells_min = self
+                    .display_db_content
+                    .display_db_cells_min_level
+                    .load(Ordering::Relaxed);
+                let mut display_db_cells_max = self
+                    .display_db_content
+                    .display_db_cells_max_level
+                    .load(Ordering::Relaxed);
+                ui.label(format!(
+                    "Cells resolution between {display_db_cells_min} and {display_db_cells_max}"
+                ));
+                ui.add(DoubleSlider::new(
+                    &mut display_db_cells_min,
+                    &mut display_db_cells_max,
+                    Resolution::Zero as usize..=Resolution::Fifteen as usize,
+                ));
+                self.display_db_content
+                    .display_db_cells_min_level
+                    .store(display_db_cells_min, Ordering::Relaxed);
+                self.display_db_content
+                    .display_db_cells_max_level
+                    .store(display_db_cells_max, Ordering::Relaxed);
+            }
+        });
     }
 }
 
