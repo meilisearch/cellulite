@@ -21,11 +21,11 @@ egui_double_slider = "0.7.0"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3.19.1"
-heed = "0.22.0"
-h3o = { version = "0.7.1", features = ["geo"] }
+heed = { workspace = true }
+h3o = { workspace = true }
 walkers = "0.35.0"
-geo-types = "0.7.15"
+geo-types = { workspace = true }
 rand = "0.9.0"
 synchronoise = "1.0.1"
-roaring = "0.10.10"
-geo = "0.29.3"
+roaring = { workspace = true }
+geo = { workspace = true }
