@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use cellulite::geom::bounding_box;
 use egui::{epaint::PathStroke, Color32, Painter, Pos2};
 use geo_types::Coord;
 use h3o::CellIndex;
@@ -32,8 +33,9 @@ pub fn project_line_string(projector: &Projector, line: &[Coord]) -> Vec<Pos2> {
 }
 
 pub fn display_cell(projector: &Projector, painter: &Painter, cell: CellIndex, color: Color32) {
-    let solvent = h3o::geom::SolventBuilder::new().build();
-    let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
+    // let solvent = h3o::geom::SolventBuilder::new().build();
+    // let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
+    let cell_polygon = bounding_box(cell);
     let cell_polygon = &cell_polygon.0[0];
     let line = project_line_string(projector, &cell_polygon.exterior().0);
     painter.line(

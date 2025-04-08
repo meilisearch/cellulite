@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, VecDeque};
 use ::roaring::RoaringBitmap;
 use geo::{Contains, Coord, Intersects};
 use geo_types::Polygon;
+use geom::bounding_box;
 use h3o::{
     error::{InvalidGeometry, InvalidLatLng},
     geom::{ContainmentMode, TilerBuilder},
@@ -12,6 +13,7 @@ use heed::{RoTxn, RwTxn, Unspecified};
 use keys::{CellIndexCodec, Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 use ordered_float::OrderedFloat;
 
+pub mod geom;
 mod keys;
 mod roaring;
 #[cfg(test)]
@@ -208,7 +210,13 @@ impl Writer {
 
         let mut ret = RoaringBitmap::new();
         let mut double_check = RoaringBitmap::new();
-        let mut to_explore: VecDeque<_> = tiler.into_coverage().collect();
+        let mut to_explore: Vec<_> = tiler
+            .into_coverage()
+            .flat_map(|cell| cell.grid_disk::<Vec<_>>(1))
+            .collect();
+        to_explore.sort_unstable();
+        to_explore.dedup();
+        let mut to_explore: VecDeque<_> = to_explore.into_iter().collect();
 
         while let Some(cell) = to_explore.pop_front() {
             let Some(items) = self.cell_db().get(rtxn, &Key::Cell(cell))? else {
@@ -217,8 +225,9 @@ impl Writer {
             };
 
             // Can't fail since we specified only one cell
-            let solvent = h3o::geom::SolventBuilder::new().build();
-            let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
+            // let solvent = h3o::geom::SolventBuilder::new().build();
+            // let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
+            let cell_polygon = bounding_box(cell);
             let cell_polygon = &cell_polygon.0[0];
             if polygon.contains(cell_polygon) {
                 (inspector)((FilteringStep::Returned, cell));
