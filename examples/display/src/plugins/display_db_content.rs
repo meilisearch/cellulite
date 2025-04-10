@@ -15,6 +15,7 @@ use crate::{runner::Runner, utils::display_cell};
 #[derive(Clone)]
 pub struct DisplayDbContent {
     pub display_db_cells: Arc<AtomicBool>,
+    pub as_bounding_box: Arc<AtomicBool>,
     pub display_db_cells_min_res: Arc<AtomicUsize>,
     pub display_db_cells_max_res: Arc<AtomicUsize>,
     pub display_items: Arc<AtomicBool>,
@@ -25,6 +26,7 @@ impl DisplayDbContent {
     pub fn new(runner: Runner) -> Self {
         DisplayDbContent {
             display_db_cells: Arc::default(),
+            as_bounding_box: Arc::default(),
             display_db_cells_min_res: Arc::new(AtomicUsize::from(0)),
             display_db_cells_max_res: Arc::new(AtomicUsize::from(16)),
             display_items: Arc::default(),
@@ -51,6 +53,7 @@ impl DisplayDbContent {
         if display_db_cells {
             let mut display_db_cells_min = self.display_db_cells_min_res.load(Ordering::Relaxed);
             let mut display_db_cells_max = self.display_db_cells_max_res.load(Ordering::Relaxed);
+            let mut as_bb = self.as_bounding_box.load(Ordering::Relaxed);
             ui.label(format!(
                 "Cells resolution between {display_db_cells_min} and {display_db_cells_max}"
             ));
@@ -59,10 +62,12 @@ impl DisplayDbContent {
                 &mut display_db_cells_max,
                 Resolution::Zero as usize..=Resolution::Fifteen as usize,
             ));
+            ui.toggle_value(&mut as_bb, "Display cells as bounding box");
             self.display_db_cells_min_res
                 .store(display_db_cells_min, Ordering::Relaxed);
             self.display_db_cells_max_res
                 .store(display_db_cells_max, Ordering::Relaxed);
+            self.as_bounding_box.store(as_bb, Ordering::Relaxed);
         }
     }
 }
@@ -88,6 +93,7 @@ impl Plugin for DisplayDbContent {
         if self.display_db_cells.load(Ordering::Relaxed) {
             let min = self.display_db_cells_min_res.load(Ordering::Relaxed);
             let max = self.display_db_cells_max_res.load(Ordering::Relaxed);
+            let as_bb = self.as_bounding_box.load(Ordering::Relaxed);
 
             for (cell, nb_points) in self.runner.all_db_cells.lock().iter().copied() {
                 if (min..max).contains(&(cell.resolution() as usize)) {
@@ -99,6 +105,7 @@ impl Plugin for DisplayDbContent {
                             Color32::RED,
                             nb_points as f32 / self.runner.db.threshold as f32,
                         ),
+                        as_bb,
                     );
                 }
             }
