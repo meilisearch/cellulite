@@ -1,7 +1,10 @@
 use cellulite::{Database, Writer};
+use france_regions::{gard, le_vigan, nimes, occitanie};
+use geo::{Coord, LineString, Polygon};
 use heed::EnvOpenOptions;
 use tempfile::TempDir;
 
+mod france_regions;
 mod france_shops;
 
 fn main() {
@@ -38,4 +41,61 @@ fn main() {
     wtxn.commit().unwrap();
 
     println!("Points inserted in {:?}", time.elapsed());
+
+    let repeat = 3000;
+
+    let rtxn = env.read_txn().unwrap();
+    let writer = Writer::new(database);
+    let le_vigan = le_vigan();
+    let time = std::time::Instant::now();
+    let result = writer.in_shape(&rtxn, &le_vigan, &mut |_| ()).unwrap();
+    for _ in 0..repeat {
+        let sub_res = writer.in_shape(&rtxn, &le_vigan, &mut |_| ()).unwrap();
+        assert_eq!(result.len(), sub_res.len());
+    }
+    println!(
+        "Found {} stores in Le Vigan in {:?}",
+        result.len(),
+        time.elapsed() / repeat
+    );
+
+    let time = std::time::Instant::now();
+
+    let nimes = nimes();
+    let result = writer.in_shape(&rtxn, &nimes, &mut |_| ()).unwrap();
+    for _ in 0..repeat {
+        let sub_res = writer.in_shape(&rtxn, &nimes, &mut |_| ()).unwrap();
+        assert_eq!(result.len(), sub_res.len());
+    }
+    println!(
+        "Found {} stores in Nîmes in {:?}",
+        result.len(),
+        time.elapsed() / repeat
+    );
+
+    let repeat = 1000;
+    let gard = gard();
+    let result = writer.in_shape(&rtxn, &gard, &mut |_| ()).unwrap();
+    for _ in 0..repeat {
+        let sub_res = writer.in_shape(&rtxn, &gard, &mut |_| ()).unwrap();
+        assert_eq!(result.len(), sub_res.len());
+    }
+    println!(
+        "Found {} stores in Gard in {:?}",
+        result.len(),
+        time.elapsed() / repeat
+    );
+
+    let repeat = 500;
+    let occitanie = occitanie();
+    let result = writer.in_shape(&rtxn, &occitanie, &mut |_| ()).unwrap();
+    for _ in 0..repeat {
+        let sub_res = writer.in_shape(&rtxn, &occitanie, &mut |_| ()).unwrap();
+        assert_eq!(result.len(), sub_res.len());
+    }
+    println!(
+        "Found {} stores in Occitanie in {:?}",
+        result.len(),
+        time.elapsed() / repeat
+    );
 }
