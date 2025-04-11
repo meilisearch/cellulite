@@ -1,6 +1,5 @@
 use cellulite::{Database, Writer};
 use france_regions::{gard, le_vigan, nimes, occitanie};
-use geo::{Coord, LineString, Polygon};
 use heed::EnvOpenOptions;
 use tempfile::TempDir;
 
