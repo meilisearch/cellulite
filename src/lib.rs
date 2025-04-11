@@ -200,7 +200,7 @@ impl Writer {
     pub fn in_shape(
         &self,
         rtxn: &RoTxn,
-        polygon: Polygon,
+        polygon: &Polygon,
         inspector: &mut dyn FnMut((FilteringStep, CellIndex)),
     ) -> Result<RoaringBitmap> {
         let mut tiler = TilerBuilder::new(Resolution::Zero)

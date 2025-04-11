@@ -115,6 +115,8 @@ impl PolygonFiltering {
                     .store(display_details_min, Ordering::Relaxed);
                 self.display_details_max_res
                     .store(display_details_max, Ordering::Relaxed);
+                let polygon = self.runner.polygon_filter.lock();
+                ui.label(format!("Coords: {:?}", *polygon));
             }
         });
     }
