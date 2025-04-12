@@ -109,12 +109,18 @@ impl Runner {
                             id,
                             &GeoJson::Geometry(geojson::Geometry {
                                 bbox: None,
-                                value: Value::Point(vec![point.lat(), point.lng()]),
+                                value: Value::Point(vec![point.lng(), point.lat()]),
                                 foreign_members: None,
                             }),
                         )
                         .unwrap();
                 }
+                let mut all_db_cells = Vec::new();
+                for entry in self.db.inner_db_cells(&wtxn).unwrap() {
+                    let (cell, bitmap) = entry.unwrap();
+                    all_db_cells.push((cell, bitmap.len() as usize));
+                }
+                *self.all_db_cells.lock() = all_db_cells;
 
                 // We must recompute the stats
                 if !to_insert.is_empty() {
