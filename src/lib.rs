@@ -37,11 +37,6 @@ pub enum Error {
 
 type Result<O, E = Error> = std::result::Result<O, E>;
 
-enum Shape {
-    Points(Vec<(f64, f64)>),
-    Polygon(Vec<Vec<(f64, f64)>>),
-}
-
 #[derive(Clone)]
 pub struct Writer {
     pub(crate) db: Database,
@@ -79,7 +74,7 @@ impl Writer {
             .map_err(Error::from)
     }
 
-    /// Return all the cells used internally in the database
+    /// Iterate over all the items in the database
     pub fn items<'a>(
         &self,
         rtxn: &'a RoTxn,
