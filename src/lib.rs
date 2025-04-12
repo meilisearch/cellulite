@@ -1,15 +1,16 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use ::roaring::RoaringBitmap;
-use geo::{Contains, Coord, Intersects};
+use geo::{Contains, Coord, Geometry, Intersects};
 use geo_types::Polygon;
+use geojson::GeoJson;
 use geom::bounding_box;
 use h3o::{
     error::{InvalidGeometry, InvalidLatLng},
     geom::{ContainmentMode, TilerBuilder},
     CellIndex, LatLng, Resolution,
 };
-use heed::{RoTxn, RwTxn, Unspecified};
+use heed::{types::SerdeJson, RoTxn, RwTxn, Unspecified};
 use keys::{CellIndexCodec, Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 use ordered_float::OrderedFloat;
 
@@ -35,6 +36,11 @@ pub enum Error {
 }
 
 type Result<O, E = Error> = std::result::Result<O, E>;
+
+enum Shape {
+    Points(Vec<(f64, f64)>),
+    Polygon(Vec<Vec<(f64, f64)>>),
+}
 
 #[derive(Clone)]
 pub struct Writer {
@@ -67,27 +73,22 @@ impl Writer {
     }
 
     /// Return the coordinates of the items rounded down to 50cm if this id exists in the DB. Returns `None` otherwise.
-    pub fn item(&self, rtxn: &RoTxn, item: ItemId) -> Result<Option<(f64, f64)>> {
-        match self.item_db().get(rtxn, &Key::Item(item)) {
-            Ok(Some(cell)) => {
-                let c = LatLng::from(cell);
-                Ok(Some((c.lat(), c.lng())))
-            }
-            Ok(None) => Ok(None),
-            Err(err) => Err(err.into()),
-        }
+    pub fn item(&self, rtxn: &RoTxn, item: ItemId) -> Result<Option<GeoJson>> {
+        self.item_db()
+            .get(rtxn, &Key::Item(item))
+            .map_err(Error::from)
     }
 
     /// Return all the cells used internally in the database
     pub fn items<'a>(
         &self,
         rtxn: &'a RoTxn,
-    ) -> Result<impl Iterator<Item = Result<(ItemId, CellIndex), heed::Error>> + 'a> {
+    ) -> Result<impl Iterator<Item = Result<(ItemId, GeoJson), heed::Error>> + 'a> {
         Ok(self
             .db
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter(rtxn, &KeyVariant::Item)?
-            .remap_types::<KeyCodec, CellIndexCodec>()
+            .remap_types::<KeyCodec, SerdeJson<GeoJson>>()
             .map(|res| {
                 res.map(|(key, cell)| {
                     let Key::Item(item) = key else { unreachable!() };
@@ -96,33 +97,38 @@ impl Writer {
             }))
     }
 
-    pub fn add_item(&self, wtxn: &mut RwTxn, item: ItemId, coord: (f64, f64)) -> Result<()> {
-        let lat_lng_cell = LatLng::new(coord.0, coord.1)?;
-        self.db.remap_data_type::<CellIndexCodec>().put(
-            wtxn,
-            &Key::Item(item),
-            &lat_lng_cell.to_cell(Resolution::Fifteen),
-        )?;
-        self.insert_items(
-            wtxn,
-            RoaringBitmap::from_sorted_iter(Some(item)).unwrap(),
-            Resolution::Zero,
-        )
-    }
+    pub fn add_item(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
+        let shape = Geometry::try_from(geo.clone()).unwrap();
+        self.item_db().put(wtxn, &Key::Item(item), geo)?;
 
-    pub fn add_shape(
-        &self,
-        wtxn: &mut RwTxn,
-        item: ItemId,
-        polygon: Vec<(f64, f64)>,
-    ) -> Result<()> {
-        let lat_lng_cell = LatLng::new(polygon[0].0, polygon[0].1)?;
-        self.shape_db().remap_data_type::<CellIndexCodec>().put(
-            wtxn,
-            &Key::Item(item),
-            &lat_lng_cell.to_cell(Resolution::Fifteen),
-        )?;
-        Ok(())
+        match shape {
+            Geometry::Point(point) => {
+                let cell = LatLng::new(point.y(), point.x())
+                    .unwrap()
+                    .to_cell(Resolution::Zero);
+                self.insert_shape_in_cell(wtxn, item, shape, cell)
+            }
+            Geometry::MultiPoint(multi_point) => {
+                for point in multi_point {
+                    let cell = LatLng::new(point.y(), point.x())
+                        .unwrap()
+                        .to_cell(Resolution::Zero);
+                    self.insert_shape_in_cell(wtxn, item, point.into(), cell)?;
+                }
+                Ok(())
+            }
+
+            Geometry::Polygon(polygon) => todo!(),
+            Geometry::MultiPolygon(multi_polygon) => todo!(),
+            Geometry::Rect(rect) => todo!(),
+            Geometry::Triangle(triangle) => todo!(),
+
+            Geometry::GeometryCollection(geometry_collection) => todo!(),
+
+            Geometry::Line(_) | Geometry::LineString(_) | Geometry::MultiLineString(_) => {
+                return panic!("Doesn't support lines");
+            }
+        }
     }
 
     pub fn stats(&self, rtxn: &RoTxn) -> Result<Stats> {
@@ -143,7 +149,7 @@ impl Writer {
         })
     }
 
-    fn item_db(&self) -> heed::Database<KeyCodec, CellIndexCodec> {
+    fn item_db(&self) -> heed::Database<KeyCodec, SerdeJson<GeoJson>> {
         self.db.remap_data_type()
     }
 
@@ -151,40 +157,65 @@ impl Writer {
         self.db.remap_data_type()
     }
 
-    fn shape_db(&self) -> heed::Database<KeyCodec, CellIndexCodec> {
-        self.db.remap_data_type()
-    }
+    fn insert_shape_in_cell(
+        &self,
+        wtxn: &mut RwTxn,
+        item: ItemId,
+        shape: Geometry,
+        cell: CellIndex,
+    ) -> Result<()> {
+        // let solvent = h3o::geom::SolventBuilder::new().build();
+        // let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
 
-    // TODO: Can be hugely optimized by specifying the base cell + when we split a "leaf" group all items by their sub-level leaf and make just a few calls.
-    //       with the current implementation we're deserializing and reserializing and rereading and rewriting the same bitmap once per items instead of once + once for each children (5-6 times more).
-    fn insert_items(&self, wtxn: &mut RwTxn, items: RoaringBitmap, res: Resolution) -> Result<()> {
-        for item in items {
-            let cell = self.item_db().get(wtxn, &Key::Item(item))?.unwrap();
-            // This item cells are always at the maximum resolution and have a parent
-            let cell = cell.parent(res).unwrap();
-            let key = Key::Cell(cell);
-            match self.cell_db().get(wtxn, &key)? {
-                Some(mut bitmap) => {
-                    let already_splitted = bitmap.len() >= self.threshold;
-                    bitmap.insert(item);
-                    self.cell_db().put(wtxn, &key, &bitmap)?;
+        let key = Key::Cell(cell);
+        match self.cell_db().get(wtxn, &key)? {
+            Some(mut bitmap) => {
+                let already_splitted = bitmap.len() >= self.threshold;
+                bitmap.insert(item);
+                self.cell_db().put(wtxn, &key, &bitmap)?;
 
-                    // If we reached the maximum precision we can stop immediately
-                    let Some(next_res) = res.succ() else { continue };
-
-                    if bitmap.len() >= self.threshold {
-                        let to_insert = if already_splitted {
-                            RoaringBitmap::from_sorted_iter(Some(item)).unwrap()
+                if bitmap.len() >= self.threshold {
+                    let to_insert = if already_splitted {
+                        RoaringBitmap::from_sorted_iter(Some(item)).unwrap()
+                    } else {
+                        bitmap
+                    };
+                    for i in to_insert {
+                        let geometry = if i == item {
+                            shape.clone()
                         } else {
-                            bitmap
+                            self.item_db()
+                                .get(wtxn, &Key::Item(i))?
+                                .unwrap()
+                                .try_into()
+                                .unwrap()
                         };
-                        self.insert_items(wtxn, to_insert, next_res)?;
+                        match geometry {
+                            Geometry::Point(point) => {
+                                let latlng = LatLng::new(point.y(), point.x()).unwrap();
+                                self.insert_shape_in_cell(
+                                    wtxn,
+                                    i,
+                                    geometry,
+                                    latlng.to_cell(cell.resolution().succ().unwrap()),
+                                )?;
+                            }
+                            Geometry::Line(line) => todo!(),
+                            Geometry::LineString(line_string) => todo!(),
+                            Geometry::Polygon(polygon) => todo!(),
+                            Geometry::MultiPoint(multi_point) => todo!(),
+                            Geometry::MultiLineString(multi_line_string) => todo!(),
+                            Geometry::MultiPolygon(multi_polygon) => todo!(),
+                            Geometry::GeometryCollection(geometry_collection) => todo!(),
+                            Geometry::Rect(rect) => todo!(),
+                            Geometry::Triangle(triangle) => todo!(),
+                        }
                     }
                 }
-                None => {
-                    let bitmap = RoaringBitmap::from_sorted_iter(Some(item)).unwrap();
-                    self.cell_db().put(wtxn, &key, &bitmap)?;
-                }
+            }
+            None => {
+                let bitmap = RoaringBitmap::from_sorted_iter(Some(item)).unwrap();
+                self.cell_db().put(wtxn, &key, &bitmap)?;
             }
         }
         Ok(())
@@ -249,19 +280,35 @@ impl Writer {
         }
 
         for item in double_check {
-            let cell = self.item_db().get(rtxn, &Key::Item(item))?.unwrap();
-            let coord = LatLng::from(cell);
-            if polygon.contains(&Coord {
-                x: coord.lng(),
-                y: coord.lat(),
-            }) {
-                ret.insert(item);
+            let geojson = self.item_db().get(rtxn, &Key::Item(item))?.unwrap();
+            match Geometry::try_from(geojson).unwrap() {
+                Geometry::Point(point) => {
+                    if polygon.contains(&Coord {
+                        x: point.x(),
+                        y: point.y(),
+                    }) {
+                        ret.insert(item);
+                    }
+                }
+                Geometry::MultiPoint(multi_point) => todo!(),
+
+                Geometry::Polygon(polygon) => todo!(),
+                Geometry::MultiPolygon(multi_polygon) => todo!(),
+                Geometry::Rect(rect) => todo!(),
+                Geometry::Triangle(triangle) => todo!(),
+
+                Geometry::GeometryCollection(geometry_collection) => todo!(),
+
+                Geometry::MultiLineString(_) | Geometry::Line(_) | Geometry::LineString(_) => {
+                    unreachable!("lines not supported")
+                }
             }
         }
 
         Ok(ret)
     }
 
+    /*
     // TODO: this is wrong => maybe our point was on a the side of a cell and the point at the top of the cell are further away than the point in the cell below
     pub fn nearest_point(
         &self,
@@ -311,6 +358,7 @@ impl Writer {
             .take(limit as usize)
             .collect())
     }
+    */
 }
 
 #[derive(Debug, Copy, Clone)]
