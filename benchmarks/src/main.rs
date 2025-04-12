@@ -1,5 +1,6 @@
 use cellulite::{Database, Writer};
 use france_regions::{gard, le_vigan, nimes, occitanie};
+use geojson::{GeoJson, Value};
 use heed::EnvOpenOptions;
 use tempfile::TempDir;
 
@@ -35,7 +36,17 @@ fn main() {
     let mut wtxn = env.write_txn().unwrap();
 
     for (i, coord) in input.iter().enumerate() {
-        writer.add_item(&mut wtxn, i as u32, *coord).unwrap();
+        writer
+            .add_item(
+                &mut wtxn,
+                i as u32,
+                &GeoJson::Geometry(geojson::Geometry {
+                    bbox: None,
+                    value: Value::Point(vec![coord.1, coord.0]),
+                    foreign_members: None,
+                }),
+            )
+            .unwrap();
     }
     wtxn.commit().unwrap();
 

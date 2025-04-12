@@ -9,6 +9,7 @@ use std::{
 use cellulite::{FilteringStep, Stats, Writer};
 use egui::mutex::Mutex;
 use geo_types::{Coord, LineString, Polygon};
+use geojson::{GeoJson, Value};
 use h3o::{CellIndex, LatLng};
 use heed::Env;
 
@@ -75,9 +76,15 @@ impl Runner {
             let mut last_id = 0;
             let mut all_points = Vec::new();
             for entry in self.db.items(&rtxn).unwrap() {
-                let (id, cell) = entry.unwrap();
+                let (id, geometry) = entry.unwrap();
                 last_id = last_id.max(id);
-                all_points.push(LatLng::from(cell));
+                match geometry {
+                    GeoJson::Geometry(geometry) => match geometry.value {
+                        Value::Point(vec) => all_points.push(LatLng::new(vec[1], vec[0]).unwrap()),
+                        _ => todo!(),
+                    },
+                    _ => todo!(),
+                }
             }
             *self.all_items.lock() = all_points;
             self.last_id.store(last_id, Ordering::Relaxed);
@@ -97,7 +104,15 @@ impl Runner {
                 for point in to_insert.iter() {
                     let id = self.last_id.fetch_add(1, Ordering::Relaxed);
                     self.db
-                        .add_item(&mut wtxn, id, (point.lat(), point.lng()))
+                        .add_item(
+                            &mut wtxn,
+                            id,
+                            &GeoJson::Geometry(geojson::Geometry {
+                                bbox: None,
+                                value: Value::Point(vec![point.lat(), point.lng()]),
+                                foreign_members: None,
+                            }),
+                        )
                         .unwrap();
                 }
 
@@ -116,7 +131,7 @@ impl Runner {
                     let now = std::time::Instant::now();
                     let matched = self
                         .db
-                        .in_shape(&wtxn, polygon, &mut |step| steps.push(step))
+                        .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
                         .unwrap();
 
                     *self.filter_stats.lock() = Some(FilterStats {
@@ -128,6 +143,13 @@ impl Runner {
                     let mut points_matched = Vec::new();
                     for point in matched {
                         let point = self.db.item(&wtxn, point).unwrap().unwrap();
+                        let point = match point {
+                            GeoJson::Geometry(geometry) => match geometry.value {
+                                Value::Point(vec) => (vec[1], vec[0]),
+                                _ => todo!(),
+                            },
+                            _ => todo!(),
+                        };
                         points_matched.push(point);
                     }
                     *self.points_matched.lock() = points_matched;
