@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use ::roaring::RoaringBitmap;
 use geo::{Contains, Coord, Geometry, Intersects};
@@ -188,12 +188,10 @@ impl Writer {
                         match geometry {
                             Geometry::Point(point) => {
                                 let latlng = LatLng::new(point.y(), point.x()).unwrap();
-                                self.insert_shape_in_cell(
-                                    wtxn,
-                                    i,
-                                    geometry,
-                                    latlng.to_cell(cell.resolution().succ().unwrap()),
-                                )?;
+                                let Some(res) = cell.resolution().succ() else {
+                                    continue;
+                                };
+                                self.insert_shape_in_cell(wtxn, i, geometry, latlng.to_cell(res))?;
                             }
                             Geometry::Line(line) => todo!(),
                             Geometry::LineString(line_string) => todo!(),
@@ -236,13 +234,8 @@ impl Writer {
 
         let mut ret = RoaringBitmap::new();
         let mut double_check = RoaringBitmap::new();
-        let mut to_explore: Vec<_> = tiler
-            .into_coverage()
-            .flat_map(|cell| cell.grid_disk::<Vec<_>>(1))
-            .collect();
-        to_explore.sort_unstable();
-        to_explore.dedup();
-        let mut to_explore: VecDeque<_> = to_explore.into_iter().collect();
+        let mut to_explore: VecDeque<_> = tiler.into_coverage().collect();
+        let mut already_explored: HashSet<CellIndex> = to_explore.iter().copied().collect();
 
         while let Some(cell) = to_explore.pop_front() {
             let Some(items) = self.cell_db().get(rtxn, &Key::Cell(cell))? else {
@@ -250,10 +243,10 @@ impl Writer {
                 continue;
             };
 
-            // Can't fail since we specified only one cell
-            // let solvent = h3o::geom::SolventBuilder::new().build();
-            // let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
-            let cell_polygon = bounding_box(cell);
+            let solvent = h3o::geom::SolventBuilder::new().build();
+            let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
+
+            // let cell_polygon = bounding_box(cell);
             let cell_polygon = &cell_polygon.0[0];
             if polygon.contains(cell_polygon) {
                 (inspector)((FilteringStep::Returned, cell));
@@ -265,14 +258,24 @@ impl Writer {
                     double_check |= items;
                 } else {
                     (inspector)((FilteringStep::DeepDive, cell));
-                    // unwrap is safe since we checked we're not at the last resolution right above
-                    to_explore.extend(cell.children(resolution.succ().unwrap()));
+                    let mut tiler = TilerBuilder::new(resolution.succ().unwrap())
+                        .containment_mode(ContainmentMode::Covers)
+                        .build();
+                    tiler.add(cell_polygon.clone())?;
+                    for cell in tiler.into_coverage() {
+                        if already_explored.insert(cell) {
+                            to_explore.push_front(cell);
+                        }
+                    }
                 }
             } else {
                 // else: we can ignore the cell, it's not part of our shape
                 (inspector)((FilteringStep::OutsideOfShape, cell));
             }
         }
+
+        // Since we have overlap some items may have been definitely validated somewhere but were also included as something to double check
+        double_check -= &ret;
 
         for item in double_check {
             let geojson = self.item_db().get(rtxn, &Key::Item(item))?.unwrap();
