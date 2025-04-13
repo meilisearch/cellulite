@@ -83,7 +83,7 @@ fn main() {
         time.elapsed() / repeat
     );
 
-    let repeat = 1;
+    let repeat = 100;
     let gard = gard();
     let result = writer.in_shape(&rtxn, &gard, &mut |_| ()).unwrap();
     for _ in 0..repeat {
@@ -96,7 +96,7 @@ fn main() {
         time.elapsed() / repeat
     );
 
-    let repeat = 1;
+    let repeat = 100;
     let occitanie = occitanie();
     let result = writer.in_shape(&rtxn, &occitanie, &mut |_| ()).unwrap();
     for _ in 0..repeat {
