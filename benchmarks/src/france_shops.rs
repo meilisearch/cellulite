@@ -1,4 +1,5 @@
 use geo::algorithm::proj::Proj;
+use geojson::{GeoJson, Value};
 use std::io::BufReader;
 
 use flate2::bufread::GzDecoder;
@@ -27,7 +28,7 @@ struct Properties {
     name: Option<String>,
 }
 
-pub fn parse() -> Vec<(f64, f64)> {
+pub fn parse() -> impl Iterator<Item = GeoJson> {
     let file = std::fs::File::open("assets/france-shops.json.gz").unwrap();
     let file = BufReader::new(file);
     let file = GzDecoder::new(file);
@@ -36,9 +37,8 @@ pub fn parse() -> Vec<(f64, f64)> {
 
     input
         .features
-        .iter()
+        .into_iter()
         .map(|feature| feature.geometry.coordinates)
-        .map(|[x, y]| projection.convert((x, y)).unwrap())
-        .map(|(x, y)| (y, x))
-        .collect()
+        .map(move |[x, y]| projection.convert((x, y)).unwrap())
+        .map(|(lat, lng)| GeoJson::Geometry(geojson::Geometry::new(Value::Point(vec![lat, lng]))))
 }
