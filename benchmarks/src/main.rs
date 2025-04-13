@@ -52,7 +52,7 @@ fn main() {
 
     println!("Points inserted in {:?}", time.elapsed());
 
-    let repeat = 3000;
+    let repeat = 1000;
 
     let rtxn = env.read_txn().unwrap();
     let writer = Writer::new(database);
@@ -83,7 +83,7 @@ fn main() {
         time.elapsed() / repeat
     );
 
-    let repeat = 1000;
+    let repeat = 1;
     let gard = gard();
     let result = writer.in_shape(&rtxn, &gard, &mut |_| ()).unwrap();
     for _ in 0..repeat {
@@ -96,7 +96,7 @@ fn main() {
         time.elapsed() / repeat
     );
 
-    let repeat = 500;
+    let repeat = 1;
     let occitanie = occitanie();
     let result = writer.in_shape(&rtxn, &occitanie, &mut |_| ()).unwrap();
     for _ in 0..repeat {
