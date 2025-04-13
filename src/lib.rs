@@ -264,7 +264,7 @@ impl Writer {
                     tiler.add(cell_polygon.clone())?;
                     for cell in tiler.into_coverage() {
                         if already_explored.insert(cell) {
-                            to_explore.push_front(cell);
+                            to_explore.push_back(cell);
                         }
                     }
                 }
