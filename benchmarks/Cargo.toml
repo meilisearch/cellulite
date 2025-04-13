@@ -12,3 +12,4 @@ serde_json = "1.0.140"
 flate2 = "1.1.0"
 geo = { workspace = true, features = ["proj", "use-proj"] }
 geojson = { workspace = true }
+clap = { version = "4.5.36", features = ["derive"] }
