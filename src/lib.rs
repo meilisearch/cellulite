@@ -4,15 +4,13 @@ use ::roaring::RoaringBitmap;
 use geo::{Contains, Coord, Geometry, Intersects};
 use geo_types::Polygon;
 use geojson::GeoJson;
-use geom::bounding_box;
 use h3o::{
     error::{InvalidGeometry, InvalidLatLng},
     geom::{ContainmentMode, TilerBuilder},
     CellIndex, LatLng, Resolution,
 };
 use heed::{types::SerdeJson, RoTxn, RwTxn, Unspecified};
-use keys::{CellIndexCodec, Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
-use ordered_float::OrderedFloat;
+use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 
 pub mod geom;
 mod keys;
@@ -113,15 +111,15 @@ impl Writer {
                 Ok(())
             }
 
-            Geometry::Polygon(polygon) => todo!(),
-            Geometry::MultiPolygon(multi_polygon) => todo!(),
-            Geometry::Rect(rect) => todo!(),
-            Geometry::Triangle(triangle) => todo!(),
+            Geometry::Polygon(_polygon) => todo!(),
+            Geometry::MultiPolygon(_multi_polygon) => todo!(),
+            Geometry::Rect(_rect) => todo!(),
+            Geometry::Triangle(_triangle) => todo!(),
 
-            Geometry::GeometryCollection(geometry_collection) => todo!(),
+            Geometry::GeometryCollection(_geometry_collection) => todo!(),
 
             Geometry::Line(_) | Geometry::LineString(_) | Geometry::MultiLineString(_) => {
-                return panic!("Doesn't support lines");
+                panic!("Doesn't support lines")
             }
         }
     }
@@ -193,15 +191,17 @@ impl Writer {
                                 };
                                 self.insert_shape_in_cell(wtxn, i, geometry, latlng.to_cell(res))?;
                             }
-                            Geometry::Line(line) => todo!(),
-                            Geometry::LineString(line_string) => todo!(),
-                            Geometry::Polygon(polygon) => todo!(),
-                            Geometry::MultiPoint(multi_point) => todo!(),
-                            Geometry::MultiLineString(multi_line_string) => todo!(),
-                            Geometry::MultiPolygon(multi_polygon) => todo!(),
-                            Geometry::GeometryCollection(geometry_collection) => todo!(),
-                            Geometry::Rect(rect) => todo!(),
-                            Geometry::Triangle(triangle) => todo!(),
+                            Geometry::MultiPoint(_multi_point) => todo!(),
+                            Geometry::Polygon(_polygon) => todo!(),
+                            Geometry::MultiPolygon(_multi_polygon) => todo!(),
+                            Geometry::Rect(_rect) => todo!(),
+                            Geometry::Triangle(_triangle) => todo!(),
+
+                            Geometry::GeometryCollection(_geometry_collection) => todo!(),
+
+                            Geometry::Line(_)
+                            | Geometry::LineString(_)
+                            | Geometry::MultiLineString(_) => unreachable!(),
                         }
                     }
                 }
@@ -288,14 +288,14 @@ impl Writer {
                         ret.insert(item);
                     }
                 }
-                Geometry::MultiPoint(multi_point) => todo!(),
+                Geometry::MultiPoint(_multi_point) => todo!(),
 
-                Geometry::Polygon(polygon) => todo!(),
-                Geometry::MultiPolygon(multi_polygon) => todo!(),
-                Geometry::Rect(rect) => todo!(),
-                Geometry::Triangle(triangle) => todo!(),
+                Geometry::Polygon(_polygon) => todo!(),
+                Geometry::MultiPolygon(_multi_polygon) => todo!(),
+                Geometry::Rect(_rect) => todo!(),
+                Geometry::Triangle(_triangle) => todo!(),
 
-                Geometry::GeometryCollection(geometry_collection) => todo!(),
+                Geometry::GeometryCollection(_geometry_collection) => todo!(),
 
                 Geometry::MultiLineString(_) | Geometry::Line(_) | Geometry::LineString(_) => {
                     unreachable!("lines not supported")
@@ -305,58 +305,6 @@ impl Writer {
 
         Ok(ret)
     }
-
-    /*
-    // TODO: this is wrong => maybe our point was on a the side of a cell and the point at the top of the cell are further away than the point in the cell below
-    pub fn nearest_point(
-        &self,
-        rtxn: &RoTxn,
-        coord: (f64, f64),
-        limit: u64,
-    ) -> Result<Vec<(ItemId, (f64, f64))>> {
-        let lat_lng_cell = LatLng::new(coord.0, coord.1)?;
-
-        let mut res = Resolution::Zero;
-        let mut bitmap = RoaringBitmap::new();
-
-        loop {
-            let cell = lat_lng_cell.to_cell(res);
-            let key = Key::Cell(cell);
-            // We're looking for the resolution that gives us just slightly more elements than the limit
-            match self.cell_db().get(rtxn, &key)? {
-                Some(sub_bitmap) => {
-                    if sub_bitmap.len() < limit {
-                        break;
-                    }
-                    bitmap = sub_bitmap;
-                    let Some(sub_res) = res.succ() else { break };
-                    res = sub_res;
-                }
-                None => break,
-            }
-        }
-
-        for cell in lat_lng_cell.to_cell(res).grid_disk::<Vec<_>>(1) {
-            if let Some(sub_bitmap) = self.cell_db().get(rtxn, &Key::Cell(cell))? {
-                bitmap |= sub_bitmap;
-            }
-        }
-
-        let mut ret = Vec::with_capacity(bitmap.len() as usize);
-        for item in bitmap {
-            ret.push((
-                item,
-                LatLng::from(self.item_db().get(rtxn, &Key::Item(item))?.unwrap()),
-            ));
-        }
-        ret.sort_by_cached_key(|(_, other)| OrderedFloat(lat_lng_cell.distance_m(*other)));
-        Ok(ret
-            .into_iter()
-            .map(|(id, coord)| (id, (coord.lat(), coord.lng())))
-            .take(limit as usize)
-            .collect())
-    }
-    */
 }
 
 #[derive(Debug, Copy, Clone)]
