@@ -219,7 +219,7 @@ impl Plugin for PolygonFiltering {
                             FilteringStep::RequireDoubleCheck => Color32::YELLOW,
                             FilteringStep::DeepDive => Color32::BLUE,
                         };
-                        display_cell(projector, painter, cell, color, true);
+                        display_cell(projector, painter, cell, color, false);
                     }
                 }
             }
