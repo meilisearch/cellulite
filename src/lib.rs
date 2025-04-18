@@ -236,6 +236,7 @@ impl Writer {
         let mut double_check = RoaringBitmap::new();
         let mut to_explore: VecDeque<_> = tiler.into_coverage().collect();
         let mut already_explored: HashSet<CellIndex> = to_explore.iter().copied().collect();
+        let mut too_large = false;
 
         while let Some(cell) = to_explore.pop_front() {
             let Some(items) = self.cell_db().get(rtxn, &Key::Cell(cell))? else {
@@ -261,11 +262,23 @@ impl Writer {
                     let mut tiler = TilerBuilder::new(resolution.succ().unwrap())
                         .containment_mode(ContainmentMode::Covers)
                         .build();
-                    tiler.add(cell_polygon.clone())?;
+                    if too_large {
+                        tiler.add(cell_polygon.clone())?;
+                    } else {
+                        tiler.add(polygon.clone())?;
+                    }
+
+                    let mut cell_number = 0;
+
                     for cell in tiler.into_coverage() {
                         if already_explored.insert(cell) {
                             to_explore.push_back(cell);
                         }
+                        cell_number += 1;
+                    }
+
+                    if cell_number > 3 {
+                        too_large = true;
                     }
                 }
             } else {
