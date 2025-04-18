@@ -15,6 +15,8 @@ use crate::{
     utils::{display_cell, project_line_string},
 };
 
+use super::{insert_into_database::InsertMode, InsertIntoDatabase};
+
 /// Plugin used to create or delete a polygon used to select a subset of points
 #[derive(Clone)]
 pub struct PolygonFiltering {
@@ -23,16 +25,18 @@ pub struct PolygonFiltering {
     pub display_details_min_res: Arc<AtomicUsize>,
     pub display_details_max_res: Arc<AtomicUsize>,
     runner: Runner,
+    pub insert_into_database: InsertIntoDatabase,
 }
 
 impl PolygonFiltering {
-    pub fn new(runner: Runner) -> Self {
+    pub fn new(runner: Runner, insert_into_database: InsertIntoDatabase) -> Self {
         PolygonFiltering {
             runner,
-            in_creation: Arc::default(),
+            in_creation: insert_into_database.filtering.clone(),
             display_filtering_details: Arc::default(),
             display_details_min_res: Arc::new(AtomicUsize::new(0)),
             display_details_max_res: Arc::new(AtomicUsize::new(16)),
+            insert_into_database,
         }
     }
 
@@ -44,6 +48,7 @@ impl PolygonFiltering {
             if !in_creation && no_polygon {
                 if ui.button("Create polygon").clicked() {
                     self.in_creation.store(true, Ordering::Relaxed);
+                    *self.insert_into_database.insert_mode.lock() = InsertMode::Disable;
                 }
             } else if !in_creation && !no_polygon {
                 if ui.button("Delete polygon").clicked() {

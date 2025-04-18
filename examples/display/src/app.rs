@@ -48,8 +48,7 @@ impl App {
 
         let runner = Runner::new(env.clone(), db.clone());
         let insert_into_database = plugins::InsertIntoDatabase::new(runner.clone());
-        let mut polygon_filtering = plugins::PolygonFiltering::new(runner.clone());
-        polygon_filtering.in_creation = insert_into_database.disabled.clone();
+        let polygon_filtering = plugins::PolygonFiltering::new(runner.clone(), insert_into_database.clone());
 
         Self {
             tiles: HttpTiles::new(OpenStreetMap, cc.egui_ctx.clone()),
@@ -67,6 +66,7 @@ impl App {
 
     pub fn side_panel(&self, ui: &mut Ui) {
         self.debug(ui);
+        self.insert_into_database.ui(ui);
         self.polygon_filtering.ui(ui);
     }
 
