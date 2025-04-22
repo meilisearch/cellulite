@@ -9,8 +9,8 @@ use std::{
 use cellulite::{FilteringStep, Stats, Writer};
 use egui::mutex::Mutex;
 use geo_types::{Coord, LineString, Polygon};
-use geojson::{GeoJson, Value};
-use h3o::{CellIndex, LatLng};
+use geojson::GeoJson;
+use h3o::CellIndex;
 use heed::Env;
 
 #[derive(Clone)]
@@ -30,7 +30,7 @@ pub struct Runner {
 
     // Current state of the DB
     last_id: Arc<AtomicU32>,
-    pub all_items: Arc<Mutex<Vec<LatLng>>>,
+    pub all_items: Arc<Mutex<Vec<geojson::Value>>>,
     pub all_db_cells: Arc<Mutex<Vec<(CellIndex, usize)>>>,
 }
 
@@ -62,21 +62,7 @@ impl Runner {
 
     pub fn add_shape(&self, value: geojson::Value) {
         // We still need to update all_items for visualization purposes
-        match &value {
-            geojson::Value::Point(coords) => {
-                self.all_items
-                    .lock()
-                    .push(LatLng::new(coords[1], coords[0]).unwrap());
-            }
-            geojson::Value::MultiPoint(coords) => {
-                for coord in coords {
-                    self.all_items
-                        .lock()
-                        .push(LatLng::new(coord[1], coord[0]).unwrap());
-                }
-            }
-            _ => (),
-        }
+        self.all_items.lock().push(value.clone());
         self.to_insert.lock().push(value);
         self.wake_up.signal();
     }
@@ -94,15 +80,7 @@ impl Runner {
                 let (id, geometry) = entry.unwrap();
                 last_id = last_id.max(id);
                 match geometry {
-                    GeoJson::Geometry(geometry) => match geometry.value {
-                        Value::Point(vec) => all_points.push(LatLng::new(vec[1], vec[0]).unwrap()),
-                        Value::MultiPoint(points) => {
-                            for point in points {
-                                all_points.push(LatLng::new(point[1], point[0]).unwrap());
-                            }
-                        }
-                        _ => todo!(),
-                    },
+                    GeoJson::Geometry(geometry) => all_points.push(geometry.value),
                     _ => todo!(),
                 }
             }

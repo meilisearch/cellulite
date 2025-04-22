@@ -339,7 +339,12 @@ impl Writer {
                     }
                 }
 
-                Geometry::Polygon(_polygon) => todo!(),
+                Geometry::Polygon(poly) => {
+                    // If the polygon is contained or intersect with the query polygon, add it
+                    if polygon.contains(&poly) || polygon.intersects(&poly) {
+                        ret.insert(item);
+                    }
+                }
                 Geometry::MultiPolygon(_multi_polygon) => todo!(),
                 Geometry::Rect(_rect) => todo!(),
                 Geometry::Triangle(_triangle) => todo!(),
