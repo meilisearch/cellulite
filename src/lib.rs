@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use ::roaring::RoaringBitmap;
-use geo::{Contains, Coord, Geometry, Intersects};
-use geo_types::Polygon;
+use geo::{BooleanOps, Contains, Coord, Geometry, Intersects};
+use geo_types::{MultiPolygon, Polygon};
 use geojson::GeoJson;
 use h3o::{
     error::{InvalidGeometry, InvalidLatLng},
@@ -111,7 +111,17 @@ impl Writer {
                 Ok(())
             }
 
-            Geometry::Polygon(_polygon) => todo!(),
+            Geometry::Polygon(polygon) => {
+                let mut tiler = TilerBuilder::new(Resolution::Zero)
+                    .containment_mode(ContainmentMode::Covers)
+                    .build();
+                tiler.add(polygon.clone())?;
+                
+                for cell in tiler.into_coverage() {
+                    self.insert_shape_in_cell(wtxn, item, Geometry::Polygon(polygon.clone()), cell)?;
+                }
+                Ok(())
+            }
             Geometry::MultiPolygon(_multi_polygon) => todo!(),
             Geometry::Rect(_rect) => todo!(),
             Geometry::Triangle(_triangle) => todo!(),
@@ -157,9 +167,6 @@ impl Writer {
         shape: Geometry,
         cell: CellIndex,
     ) -> Result<()> {
-        // let solvent = h3o::geom::SolventBuilder::new().build();
-        // let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
-
         let key = Key::Cell(cell);
         match self.cell_db().get(wtxn, &key)? {
             Some(mut bitmap) => {
@@ -192,7 +199,27 @@ impl Writer {
                                 self.insert_shape_in_cell(wtxn, i, geometry, latlng.to_cell(res))?;
                             }
                             Geometry::MultiPoint(_multi_point) => todo!(),
-                            Geometry::Polygon(_polygon) => todo!(),
+                            Geometry::Polygon(polygon) => {
+                                let solvent = h3o::geom::SolventBuilder::new().build();
+                                let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
+                                let cell_polygon = &cell_polygon.0[0];
+
+                                // Find the intersection between the polygon and the cell
+                                let intersection: MultiPolygon = polygon.intersection(cell_polygon);
+                                if !intersection.0.is_empty() {
+                                    let mut tiler = TilerBuilder::new(cell.resolution().succ().unwrap())
+                                        .containment_mode(ContainmentMode::Covers)
+                                        .build();
+                                    
+                                    for polygon in intersection.0 {
+                                        tiler.add(polygon)?;
+                                    }
+                                    
+                                    for cell in tiler.into_coverage() {
+                                        self.insert_shape_in_cell(wtxn, i, Geometry::Polygon(polygon.clone()), cell)?;
+                                    }
+                                }
+                            }
                             Geometry::MultiPolygon(_multi_polygon) => todo!(),
                             Geometry::Rect(_rect) => todo!(),
                             Geometry::Triangle(_triangle) => todo!(),
