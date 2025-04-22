@@ -62,8 +62,20 @@ impl Runner {
 
     pub fn add_shape(&self, value: geojson::Value) {
         // We still need to update all_items for visualization purposes
-        if let geojson::Value::Point(coords) = &value {
-            self.all_items.lock().push(LatLng::new(coords[1], coords[0]).unwrap());
+        match &value {
+            geojson::Value::Point(coords) => {
+                self.all_items
+                    .lock()
+                    .push(LatLng::new(coords[1], coords[0]).unwrap());
+            }
+            geojson::Value::MultiPoint(coords) => {
+                for coord in coords {
+                    self.all_items
+                        .lock()
+                        .push(LatLng::new(coord[1], coord[0]).unwrap());
+                }
+            }
+            _ => (),
         }
         self.to_insert.lock().push(value);
         self.wake_up.signal();
@@ -84,6 +96,11 @@ impl Runner {
                 match geometry {
                     GeoJson::Geometry(geometry) => match geometry.value {
                         Value::Point(vec) => all_points.push(LatLng::new(vec[1], vec[0]).unwrap()),
+                        Value::MultiPoint(points) => {
+                            for point in points {
+                                all_points.push(LatLng::new(point[1], point[0]).unwrap());
+                            }
+                        }
                         _ => todo!(),
                     },
                     _ => todo!(),
@@ -104,7 +121,7 @@ impl Runner {
                 let to_insert = std::mem::take(&mut *self.to_insert.lock());
                 let mut wtxn = self.env.write_txn().unwrap();
 
-                for point in to_insert.iter() {
+                for shape in to_insert.iter() {
                     let id = self.last_id.fetch_add(1, Ordering::Relaxed);
                     self.db
                         .add_item(
@@ -112,7 +129,7 @@ impl Runner {
                             id,
                             &GeoJson::Geometry(geojson::Geometry {
                                 bbox: None,
-                                value: point.clone(),
+                                value: shape.clone(),
                                 foreign_members: None,
                             }),
                         )
@@ -152,14 +169,17 @@ impl Runner {
                     let mut points_matched = Vec::new();
                     for point in matched {
                         let point = self.db.item(&wtxn, point).unwrap().unwrap();
-                        let point = match point {
+                        let points = match point {
                             GeoJson::Geometry(geometry) => match geometry.value {
-                                Value::Point(vec) => (vec[1], vec[0]),
+                                Value::Point(vec) => vec![(vec[1], vec[0])],
+                                Value::MultiPoint(vecs) => vecs.into_iter()
+                                    .map(|vec| (vec[1], vec[0]))
+                                    .collect(),
                                 _ => todo!(),
                             },
                             _ => todo!(),
                         };
-                        points_matched.push(point);
+                        points_matched.extend(points);
                     }
                     *self.points_matched.lock() = points_matched;
                 }

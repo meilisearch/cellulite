@@ -1,14 +1,14 @@
 use std::fmt;
 
+use geo::Geometry;
+use geojson::GeoJson;
 use h3o::LatLng;
 use heed::{types::SerdeJson, Env, EnvOpenOptions, RoTxn, WithTls};
 use tempfile::TempDir;
-use geo::Geometry;
-use geojson::GeoJson;
 
 use crate::{
-    roaring::RoaringBitmapCodec, Database, ItemId, Key, KeyCodec,
-    KeyPrefixVariantCodec, KeyVariant, Writer,
+    roaring::RoaringBitmapCodec, Database, ItemId, Key, KeyCodec, KeyPrefixVariantCodec,
+    KeyVariant, Writer,
 };
 
 pub struct DatabaseHandle {
@@ -33,7 +33,9 @@ impl DatabaseHandle {
             let (key, value) = ret.unwrap();
             let Key::Item(item) = key else { unreachable!() };
             let geom: Geometry<f64> = Geometry::try_from(value).unwrap();
-            let Geometry::Point(point) = geom else { unreachable!() };
+            let Geometry::Point(point) = geom else {
+                unreachable!()
+            };
             let (lat, lng) = (point.y(), point.x());
             s.push_str(&format!("{item}: ({lat:.4}, {lng:.4})\n"));
         }
@@ -100,7 +102,9 @@ fn basic_write() {
     let mut wtxn = handle.env.write_txn().unwrap();
     let mut writer = Writer::new(handle.database);
     writer.threshold = 3;
-    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![0.0, 0.0])));
+    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
+        0.0, 0.0,
+    ])));
     writer.add_item(&mut wtxn, 0, &point).unwrap();
 
     insta::assert_snapshot!(handle.snap(&wtxn), @r###"
@@ -110,9 +114,13 @@ fn basic_write() {
         Cell { res: 0, center: (2.3009, -5.2454) }: RoaringBitmap<[0]>
         "###);
 
-    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![0.0, 1.0])));
+    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
+        0.0, 1.0,
+    ])));
     writer.add_item(&mut wtxn, 1, &point).unwrap();
-    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![0.0, 2.0])));
+    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
+        0.0, 2.0,
+    ])));
     writer.add_item(&mut wtxn, 2, &point).unwrap();
 
     insta::assert_snapshot!(handle.snap(&wtxn), @r"
@@ -127,7 +135,9 @@ fn basic_write() {
     Cell { res: 2, center: (-0.4597, 0.5342) }: RoaringBitmap<[0]>
     ");
 
-    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![0.0, 3.0])));
+    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
+        0.0, 3.0,
+    ])));
     writer.add_item(&mut wtxn, 3, &point).unwrap();
 
     insta::assert_snapshot!(handle.snap(&wtxn), @r"

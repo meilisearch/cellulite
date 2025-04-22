@@ -301,7 +301,16 @@ impl Writer {
                         ret.insert(item);
                     }
                 }
-                Geometry::MultiPoint(_multi_point) => todo!(),
+                Geometry::MultiPoint(multi_point) => {
+                    if multi_point.0.iter().any(|point| {
+                        polygon.contains(&Coord {
+                            x: point.x(),
+                            y: point.y(),
+                        })
+                    }) {
+                        ret.insert(item);
+                    }
+                }
 
                 Geometry::Polygon(_polygon) => todo!(),
                 Geometry::MultiPolygon(_multi_polygon) => todo!(),

@@ -48,7 +48,8 @@ impl App {
 
         let runner = Runner::new(env.clone(), db.clone());
         let insert_into_database = plugins::InsertIntoDatabase::new(runner.clone());
-        let polygon_filtering = plugins::PolygonFiltering::new(runner.clone(), insert_into_database.clone());
+        let polygon_filtering =
+            plugins::PolygonFiltering::new(runner.clone(), insert_into_database.clone());
 
         Self {
             tiles: HttpTiles::new(OpenStreetMap, cc.egui_ctx.clone()),
