@@ -20,7 +20,7 @@ pub struct Runner {
     pub wake_up: Arc<synchronoise::SignalEvent>,
 
     // Communication input
-    pub to_insert: Arc<Mutex<Vec<LatLng>>>,
+    pub to_insert: Arc<Mutex<Vec<geojson::Value>>>,
     pub polygon_filter: Arc<Mutex<Vec<Coord<f64>>>>,
 
     // Communication output
@@ -60,9 +60,12 @@ impl Runner {
         this
     }
 
-    pub fn add_point(&self, coord: LatLng) {
-        self.to_insert.lock().push(coord);
-        self.all_items.lock().push(coord);
+    pub fn add_shape(&self, value: geojson::Value) {
+        // We still need to update all_items for visualization purposes
+        if let geojson::Value::Point(coords) = &value {
+            self.all_items.lock().push(LatLng::new(coords[1], coords[0]).unwrap());
+        }
+        self.to_insert.lock().push(value);
         self.wake_up.signal();
     }
 
@@ -109,7 +112,7 @@ impl Runner {
                             id,
                             &GeoJson::Geometry(geojson::Geometry {
                                 bbox: None,
-                                value: Value::Point(vec![point.lng(), point.lat()]),
+                                value: point.clone(),
                                 foreign_members: None,
                             }),
                         )

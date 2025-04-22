@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use egui::{mutex::Mutex, RichText, Ui, Vec2};
+use geo::Coord;
 use h3o::LatLng;
 use walkers::Plugin;
 
@@ -21,6 +22,7 @@ pub enum InsertMode {
 #[derive(Clone)]
 pub struct InsertIntoDatabase {
     pub insert_mode: Arc<Mutex<InsertMode>>,
+    insert_shape: Arc<Mutex<Vec<Coord>>>,
     runner: Runner,
     pub filtering: Arc<AtomicBool>,
 }
@@ -29,6 +31,7 @@ impl InsertIntoDatabase {
     pub fn new(runner: Runner) -> Self {
         InsertIntoDatabase {
             insert_mode: Arc::default(),
+            insert_shape: Arc::default(),
             runner,
             filtering: Arc::default(),
         }
@@ -38,7 +41,7 @@ impl InsertIntoDatabase {
         for _ in 0..n {
             let lat = rand::random_range(-90.0..=90.0);
             let lng = rand::random_range(-180.0..=180.0);
-            self.runner.add_point(LatLng::new(lat, lng).unwrap());
+            self.runner.add_shape(geojson::Value::Point(vec![lng, lat]));
         }
     }
 
@@ -76,8 +79,7 @@ impl Plugin for InsertIntoDatabase {
                 InsertMode::Disable => (),
                 InsertMode::Point => {
                     let pos = projector.unproject(Vec2::new(pos.x, pos.y));
-                    self.runner
-                        .add_point(LatLng::new(pos.y(), pos.x()).unwrap());
+                    self.runner.add_shape(geojson::Value::Point(vec![pos.x(), pos.y()]));
                 }
                 InsertMode::MultiPoint => todo!(),
             }
