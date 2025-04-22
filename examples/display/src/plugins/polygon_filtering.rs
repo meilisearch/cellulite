@@ -237,6 +237,18 @@ impl Plugin for PolygonFiltering {
                             );
                         }
                     }
+                    geojson::Value::Polygon(coords) => {
+                        if let Some(exterior) = coords.first() {
+                            let points: Vec<_> = exterior
+                                .iter()
+                                .map(|coord| {
+                                    let pos = projector.project(Position::new(coord[0], coord[1]));
+                                    pos.to_pos2()
+                                })
+                                .collect();
+                            painter.line(points, PathStroke::new(4.0, Color32::DARK_GREEN));
+                        }
+                    }
                     _ => todo!(),
                 }
             }

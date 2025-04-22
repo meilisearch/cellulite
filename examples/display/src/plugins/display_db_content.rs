@@ -112,26 +112,44 @@ impl Plugin for DisplayDbContent {
         }
 
         if self.display_items.load(Ordering::Relaxed) {
-            for coord in self.runner.all_items.lock().iter().copied() {
-                if !displayed_rect.contains(&Point::new(coord.lng(), coord.lat())) {
-                    continue;
+            for value in self.runner.all_items.lock().iter() {
+                match value {
+                    geojson::Value::Point(coords) => {
+                        let coord = h3o::LatLng::new(coords[1], coords[0]).unwrap();
+                        if !displayed_rect.contains(&Point::new(coord.lng(), coord.lat())) {
+                            continue;
+                        }
+                        let center = projector.project(Position::new(coord.lng(), coord.lat()));
+                        let size = 8.0;
+                        painter.line(
+                            vec![
+                                (center - Vec2::splat(size)).to_pos2(),
+                                (center + Vec2::splat(size)).to_pos2(),
+                            ],
+                            PathStroke::new(4.0, Color32::BLACK),
+                        );
+                        painter.line(
+                            vec![
+                                (center + Vec2::new(size, -size)).to_pos2(),
+                                (center + Vec2::new(-size, size)).to_pos2(),
+                            ],
+                            PathStroke::new(4.0, Color32::BLACK),
+                        );
+                    }
+                    geojson::Value::Polygon(coords) => {
+                        if let Some(exterior) = coords.first() {
+                            let points: Vec<_> = exterior
+                                .iter()
+                                .map(|coord| {
+                                    let pos = projector.project(Position::new(coord[0], coord[1]));
+                                    pos.to_pos2()
+                                })
+                                .collect();
+                            painter.line(points, PathStroke::new(4.0, Color32::BLACK));
+                        }
+                    }
+                    _ => todo!(),
                 }
-                let center = projector.project(Position::new(coord.lng(), coord.lat()));
-                let size = 8.0;
-                painter.line(
-                    vec![
-                        (center - Vec2::splat(size)).to_pos2(),
-                        (center + Vec2::splat(size)).to_pos2(),
-                    ],
-                    PathStroke::new(4.0, Color32::BLACK),
-                );
-                painter.line(
-                    vec![
-                        (center + Vec2::new(size, -size)).to_pos2(),
-                        (center + Vec2::new(-size, size)).to_pos2(),
-                    ],
-                    PathStroke::new(4.0, Color32::BLACK),
-                );
             }
         }
     }
