@@ -207,16 +207,21 @@ impl Writer {
                                 // Find the intersection between the polygon and the cell
                                 let intersection: MultiPolygon = polygon.intersection(cell_polygon);
                                 if !intersection.0.is_empty() {
-                                    let mut tiler = TilerBuilder::new(cell.resolution().succ().unwrap())
+                                    let Some(next_res) = cell.resolution().succ() else {
+                                        continue;
+                                    };
+                                    
+                                    let mut tiler = TilerBuilder::new(next_res)
                                         .containment_mode(ContainmentMode::Covers)
                                         .build();
                                     
+                                    let intersection_clone = intersection.clone();
                                     for polygon in intersection.0 {
                                         tiler.add(polygon)?;
                                     }
                                     
                                     for cell in tiler.into_coverage() {
-                                        self.insert_shape_in_cell(wtxn, i, Geometry::Polygon(polygon.clone()), cell)?;
+                                        self.insert_shape_in_cell(wtxn, i, Geometry::Polygon(intersection_clone.0[0].clone()), cell)?;
                                     }
                                 }
                             }
