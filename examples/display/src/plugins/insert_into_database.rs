@@ -1,11 +1,11 @@
+use std::mem;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 
 use egui::{mutex::Mutex, RichText, Ui, Vec2};
-use geo::Coord;
-use h3o::LatLng;
+use geo_types::{Coord, Point};
 use walkers::Plugin;
 
 use crate::runner::Runner;
@@ -56,6 +56,30 @@ impl InsertIntoDatabase {
                     ui.selectable_value(&mut *insert_mode, InsertMode::Point, "Point");
                     ui.selectable_value(&mut *insert_mode, InsertMode::MultiPoint, "Multipoint");
                 });
+
+            match *insert_mode {
+                InsertMode::Disable => (),
+                InsertMode::Point => {
+                    ui.label("Right click to add a point");
+                }
+                InsertMode::MultiPoint => {
+                    let mut points = self.insert_shape.lock();
+                    ui.label(format!("Points collected: {}", points.len()));
+                    if !points.is_empty() {
+                        if ui.button("Complete multipoint").clicked() {
+                            let points = mem::take(&mut *points)
+                                .into_iter()
+                                .map(|coord| vec![coord.x, coord.y])
+                                .collect();
+                            self.runner.add_shape(geojson::Value::MultiPoint(points));
+                        }
+                        if ui.button("Clear points").clicked() {
+                            points.clear();
+                        }
+                    }
+                }
+            }
+
             if self.filtering.load(Ordering::Relaxed) {
                 *insert_mode = InsertMode::Disable;
             }
@@ -66,10 +90,32 @@ impl InsertIntoDatabase {
 impl Plugin for InsertIntoDatabase {
     fn run(
         self: Box<Self>,
-        _ui: &mut egui::Ui,
+        ui: &mut egui::Ui,
         response: &egui::Response,
         projector: &walkers::Projector,
     ) {
+        // Draw pending points in yellow
+        if *self.insert_mode.lock() == InsertMode::MultiPoint {
+            let points = self.insert_shape.lock();
+            for point in points.iter() {
+                let center = projector.project(Point::new(point.x, point.y));
+                let size = 8.0;
+                ui.painter().line(
+                    vec![
+                        (center - Vec2::splat(size)).to_pos2(),
+                        (center + Vec2::splat(size)).to_pos2(),
+                    ],
+                    egui::Stroke::new(4.0, egui::Color32::YELLOW),
+                );
+                ui.painter().line(
+                    vec![
+                        (center + Vec2::new(size, -size)).to_pos2(),
+                        (center + Vec2::new(-size, size)).to_pos2(),
+                    ],
+                    egui::Stroke::new(4.0, egui::Color32::YELLOW),
+                );
+            }
+        }
         let Some(pos) = response.hover_pos() else {
             return;
         };
@@ -79,9 +125,16 @@ impl Plugin for InsertIntoDatabase {
                 InsertMode::Disable => (),
                 InsertMode::Point => {
                     let pos = projector.unproject(Vec2::new(pos.x, pos.y));
-                    self.runner.add_shape(geojson::Value::Point(vec![pos.x(), pos.y()]));
+                    self.runner
+                        .add_shape(geojson::Value::Point(vec![pos.x(), pos.y()]));
                 }
-                InsertMode::MultiPoint => todo!(),
+                InsertMode::MultiPoint => {
+                    let pos = projector.unproject(Vec2::new(pos.x, pos.y));
+                    self.insert_shape.lock().push(Coord {
+                        x: pos.x(),
+                        y: pos.y(),
+                    });
+                }
             }
         }
     }
