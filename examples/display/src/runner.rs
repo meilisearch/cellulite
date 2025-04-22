@@ -26,7 +26,7 @@ pub struct Runner {
     // Communication output
     pub stats: Arc<Mutex<Stats>>,
     pub filter_stats: Arc<Mutex<Option<FilterStats>>>,
-    pub points_matched: Arc<Mutex<Vec<(f64, f64)>>>,
+    pub points_matched: Arc<Mutex<Vec<geojson::Value>>>,
 
     // Current state of the DB
     last_id: Arc<AtomicU32>,
@@ -170,16 +170,10 @@ impl Runner {
                     for point in matched {
                         let point = self.db.item(&wtxn, point).unwrap().unwrap();
                         let points = match point {
-                            GeoJson::Geometry(geometry) => match geometry.value {
-                                Value::Point(vec) => vec![(vec[1], vec[0])],
-                                Value::MultiPoint(vecs) => vecs.into_iter()
-                                    .map(|vec| (vec[1], vec[0]))
-                                    .collect(),
-                                _ => todo!(),
-                            },
+                            GeoJson::Geometry(geometry) => geometry.value,
                             _ => todo!(),
                         };
-                        points_matched.extend(points);
+                        points_matched.push(points);
                     }
                     *self.points_matched.lock() = points_matched;
                 }

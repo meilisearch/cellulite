@@ -173,36 +173,72 @@ impl Plugin for PolygonFiltering {
         // If we have a polygon + it's finished we retrieve the points it contains and display them
         if to_display.len() >= 3 && !in_creation {
             let size = 8.0;
-            for (lat, lng) in self.runner.points_matched.lock().iter().copied() {
-                let pos = projector.project(Position::new(lng, lat));
+            for shape in self.runner.points_matched.lock().iter() {
+                match shape {
+                    geojson::Value::Point(coords) => {
+                        let pos = projector.project(Position::new(coords[0], coords[1]));
+                        painter.line(
+                            vec![
+                                Pos2 {
+                                    x: pos.x,
+                                    y: pos.y - size,
+                                },
+                                Pos2 {
+                                    x: pos.x,
+                                    y: pos.y + size,
+                                },
+                            ],
+                            PathStroke::new(4.0, Color32::DARK_GREEN),
+                        );
 
-                painter.line(
-                    vec![
-                        Pos2 {
-                            x: pos.x,
-                            y: pos.y - size,
-                        },
-                        Pos2 {
-                            x: pos.x,
-                            y: pos.y + size,
-                        },
-                    ],
-                    PathStroke::new(4.0, Color32::DARK_GREEN),
-                );
+                        painter.line(
+                            vec![
+                                Pos2 {
+                                    x: pos.x - size,
+                                    y: pos.y,
+                                },
+                                Pos2 {
+                                    x: pos.x + size,
+                                    y: pos.y,
+                                },
+                            ],
+                            PathStroke::new(4.0, Color32::DARK_GREEN),
+                        );
+                    }
+                    geojson::Value::MultiPoint(coords) => {
+                        for coord in coords {
+                            let pos = projector.project(Position::new(coord[0], coord[1]));
+                            painter.line(
+                                vec![
+                                    Pos2 {
+                                        x: pos.x,
+                                        y: pos.y - size,
+                                    },
+                                    Pos2 {
+                                        x: pos.x,
+                                        y: pos.y + size,
+                                    },
+                                ],
+                                PathStroke::new(4.0, Color32::DARK_GREEN),
+                            );
 
-                painter.line(
-                    vec![
-                        Pos2 {
-                            x: pos.x - size,
-                            y: pos.y,
-                        },
-                        Pos2 {
-                            x: pos.x + size,
-                            y: pos.y,
-                        },
-                    ],
-                    PathStroke::new(4.0, Color32::DARK_GREEN),
-                );
+                            painter.line(
+                                vec![
+                                    Pos2 {
+                                        x: pos.x - size,
+                                        y: pos.y,
+                                    },
+                                    Pos2 {
+                                        x: pos.x + size,
+                                        y: pos.y,
+                                    },
+                                ],
+                                PathStroke::new(4.0, Color32::DARK_GREEN),
+                            );
+                        }
+                    }
+                    _ => todo!(),
+                }
             }
 
             let display_filtering_details = self.display_filtering_details.load(Ordering::Relaxed);
