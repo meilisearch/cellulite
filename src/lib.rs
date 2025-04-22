@@ -116,9 +116,14 @@ impl Writer {
                     .containment_mode(ContainmentMode::Covers)
                     .build();
                 tiler.add(polygon.clone())?;
-                
+
                 for cell in tiler.into_coverage() {
-                    self.insert_shape_in_cell(wtxn, item, Geometry::Polygon(polygon.clone()), cell)?;
+                    self.insert_shape_in_cell(
+                        wtxn,
+                        item,
+                        Geometry::Polygon(polygon.clone()),
+                        cell,
+                    )?;
                 }
                 Ok(())
             }
@@ -210,18 +215,23 @@ impl Writer {
                                     let Some(next_res) = cell.resolution().succ() else {
                                         continue;
                                     };
-                                    
+
                                     let mut tiler = TilerBuilder::new(next_res)
                                         .containment_mode(ContainmentMode::Covers)
                                         .build();
-                                    
+
                                     let intersection_clone = intersection.clone();
                                     for polygon in intersection.0 {
                                         tiler.add(polygon)?;
                                     }
-                                    
+
                                     for cell in tiler.into_coverage() {
-                                        self.insert_shape_in_cell(wtxn, i, Geometry::Polygon(intersection_clone.0[0].clone()), cell)?;
+                                        self.insert_shape_in_cell(
+                                            wtxn,
+                                            i,
+                                            Geometry::Polygon(intersection_clone.0[0].clone()),
+                                            cell,
+                                        )?;
                                     }
                                 }
                             }
