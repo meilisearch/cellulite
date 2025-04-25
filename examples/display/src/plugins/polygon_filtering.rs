@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use cellulite::FilteringStep;
-use egui::{epaint::PathStroke, Color32, Pos2, RichText, Ui, Vec2};
+use egui::{epaint::PathStroke, Color32, RichText, Ui, Vec2};
 use egui_double_slider::DoubleSlider;
 use geo_types::Coord;
 use h3o::Resolution;
@@ -12,7 +12,7 @@ use walkers::{Plugin, Position};
 
 use crate::{
     runner::Runner,
-    utils::{display_cell, draw_diagonal_cross, draw_orthogonal_cross, project_line_string},
+    utils::{display_cell, draw_diagonal_cross, project_line_string},
 };
 
 use super::{insert_into_database::InsertMode, InsertIntoDatabase};
@@ -172,7 +172,6 @@ impl Plugin for PolygonFiltering {
 
         // If we have a polygon + it's finished we retrieve the points it contains and display them
         if to_display.len() >= 3 && !in_creation {
-            let size = 8.0;
             for shape in self.runner.points_matched.lock().iter() {
                 match shape {
                     geojson::Value::Point(coords) => {
