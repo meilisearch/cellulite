@@ -10,6 +10,7 @@ use geo_types::{Coord, Point};
 use walkers::Plugin;
 
 use crate::runner::Runner;
+use crate::utils::draw_diagonal_cross;
 
 #[derive(Clone, Copy, PartialEq, Default, Debug)]
 pub enum InsertMode {
@@ -124,21 +125,7 @@ impl Plugin for InsertIntoDatabase {
                 let points = self.insert_shape.lock();
                 for point in points.iter() {
                     let center = projector.project(Point::new(point.x, point.y));
-                    let size = 8.0;
-                    ui.painter().line(
-                        vec![
-                            (center - Vec2::splat(size)).to_pos2(),
-                            (center + Vec2::splat(size)).to_pos2(),
-                        ],
-                        egui::Stroke::new(4.0, egui::Color32::YELLOW),
-                    );
-                    ui.painter().line(
-                        vec![
-                            (center + Vec2::new(size, -size)).to_pos2(),
-                            (center + Vec2::new(-size, size)).to_pos2(),
-                        ],
-                        egui::Stroke::new(4.0, egui::Color32::YELLOW),
-                    );
+                    draw_diagonal_cross(&ui.painter(), center.to_pos2(), egui::Color32::YELLOW);
                 }
             }
             InsertMode::Polygon => {
@@ -165,21 +152,7 @@ impl Plugin for InsertIntoDatabase {
                 // Draw yellow crosses at each point
                 for point in points.iter() {
                     let center = projector.project(Point::new(point.x, point.y));
-                    let size = 8.0;
-                    ui.painter().line(
-                        vec![
-                            (center - Vec2::splat(size)).to_pos2(),
-                            (center + Vec2::splat(size)).to_pos2(),
-                        ],
-                        egui::Stroke::new(4.0, egui::Color32::YELLOW),
-                    );
-                    ui.painter().line(
-                        vec![
-                            (center + Vec2::new(size, -size)).to_pos2(),
-                            (center + Vec2::new(-size, size)).to_pos2(),
-                        ],
-                        egui::Stroke::new(4.0, egui::Color32::YELLOW),
-                    );
+                    draw_diagonal_cross(&ui.painter(), center.to_pos2(), egui::Color32::YELLOW);
                 }
             }
             _ => {}

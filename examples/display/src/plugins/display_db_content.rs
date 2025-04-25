@@ -9,7 +9,7 @@ use geo::{Contains, Point, Rect};
 use h3o::Resolution;
 use walkers::{Plugin, Position};
 
-use crate::{runner::Runner, utils::display_cell};
+use crate::{runner::Runner, utils::{display_cell, draw_diagonal_cross, draw_orthogonal_cross}};
 
 /// Plugin used to display the cells
 #[derive(Clone)]
@@ -113,21 +113,7 @@ impl Plugin for DisplayDbContent {
                             continue;
                         }
                         let center = projector.project(Position::new(coord.lng(), coord.lat()));
-                        let size = 8.0;
-                        painter.line(
-                            vec![
-                                (center - Vec2::splat(size)).to_pos2(),
-                                (center + Vec2::splat(size)).to_pos2(),
-                            ],
-                            PathStroke::new(4.0, Color32::BLACK),
-                        );
-                        painter.line(
-                            vec![
-                                (center + Vec2::new(size, -size)).to_pos2(),
-                                (center + Vec2::new(-size, size)).to_pos2(),
-                            ],
-                            PathStroke::new(4.0, Color32::BLACK),
-                        );
+                        draw_orthogonal_cross(&painter, center.to_pos2(), Color32::BLACK);
                     }
                     geojson::Value::Polygon(coords) => {
                         if let Some(exterior) = coords.first() {
