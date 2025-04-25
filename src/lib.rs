@@ -12,7 +12,6 @@ use h3o::{
 use heed::{types::SerdeJson, RoTxn, RwTxn, Unspecified};
 use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 
-pub mod geom;
 mod keys;
 mod roaring;
 #[cfg(test)]
