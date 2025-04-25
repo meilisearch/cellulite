@@ -5,11 +5,14 @@ use std::sync::{
 
 use egui::{epaint::PathStroke, Color32, Ui, Vec2};
 use egui_double_slider::DoubleSlider;
-use geo::{Contains, Point, Rect};
+use geo::{Contains, Intersects, Point, Rect};
 use h3o::Resolution;
 use walkers::{Plugin, Position};
 
-use crate::{runner::Runner, utils::{display_cell, draw_orthogonal_cross}};
+use crate::{
+    runner::Runner,
+    utils::{display_cell, draw_orthogonal_cross},
+};
 
 /// Plugin used to display the cells
 #[derive(Clone)]
@@ -91,15 +94,23 @@ impl Plugin for DisplayDbContent {
 
             for (cell, nb_points) in self.runner.all_db_cells.lock().iter().copied() {
                 if (min..max).contains(&(cell.resolution() as usize)) {
-                    display_cell(
-                        projector,
-                        painter,
-                        cell,
-                        Color32::BLUE.lerp_to_gamma(
-                            Color32::RED,
-                            nb_points as f32 / self.runner.db.threshold as f32,
-                        ),
+                    let boundary = cell.boundary();
+                    let polygon = geo::Polygon::new(
+                        geo::LineString::from_iter(boundary.iter().map(|v| (v.lng(), v.lat()))),
+                        vec![],
                     );
+
+                    if polygon.intersects(&displayed_rect) {
+                        display_cell(
+                            projector,
+                            painter,
+                            cell,
+                            Color32::BLUE.lerp_to_gamma(
+                                Color32::RED,
+                                nb_points as f32 / self.runner.db.threshold as f32,
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -126,11 +137,16 @@ impl Plugin for DisplayDbContent {
                         }
                     }
                     geojson::Value::Polygon(coords) => {
-                        if let Some(exterior) = coords.first() {
-                            let points: Vec<_> = exterior
-                                .iter()
-                                .map(|coord| {
-                                    let pos = projector.project(Position::new(coord[0], coord[1]));
+                        let polygon: geo::Polygon =
+                            geojson::Value::Polygon(coords.clone()).try_into().unwrap();
+
+                        if polygon.intersects(&displayed_rect) {
+                            let points: Vec<_> = polygon
+                                .exterior()
+                                .points()
+                                .map(|point| {
+                                    let pos =
+                                        projector.project(Position::new(point.x(), point.y()));
                                     pos.to_pos2()
                                 })
                                 .collect();
