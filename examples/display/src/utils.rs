@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use egui::{epaint::PathStroke, Color32, Painter, Pos2};
+use egui::{epaint::PathStroke, Color32, Painter, Pos2, Vec2};
 use geo_types::Coord;
 use h3o::CellIndex;
 use walkers::{Position, Projector};
@@ -44,5 +44,56 @@ pub fn display_cell(
     painter.line(
         line,
         PathStroke::new(16.0 - cell.resolution() as u8 as f32, color),
+    );
+}
+
+/// Draw a cross at the given center position with the specified size and color
+pub fn draw_diagonal_cross(
+    painter: &Painter,
+    point: Pos2,
+    color: Color32,
+) {
+    let size: f32 = 8.0;
+    let stroke_width: f32 = 4.0;
+    painter.line(
+        vec![
+            point - Vec2::splat(size),
+            point + Vec2::splat(size),
+        ],
+        PathStroke::new(stroke_width, color),
+    );
+    painter.line(
+        vec![
+            point + Vec2::new(size, -size),
+            point + Vec2::new(-size, size),
+        ],
+        PathStroke::new(stroke_width, color),
+    );
+}
+
+/// Draw an orthogonal cross (plus sign) at the given center position with the specified size and color
+pub fn draw_orthogonal_cross(
+    painter: &Painter,
+    point: Pos2,
+    color: Color32,
+) {
+    let size: f32 = 8.0;
+    let stroke_width: f32 = 4.0;
+    // Draw the horizontal line
+    painter.line(
+        vec![
+            point + Vec2::new(-size, 0.0),
+            point + Vec2::new(size, 0.0),
+        ],
+        PathStroke::new(stroke_width, color),
+    );
+
+    // Draw the vertical line
+    painter.line(
+        vec![
+            point + Vec2::new(0.0, -size),
+            point + Vec2::new(0.0, size),
+        ],
+        PathStroke::new(stroke_width, color),
     );
 }
