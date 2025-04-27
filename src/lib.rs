@@ -13,7 +13,7 @@ use heed::{types::SerdeJson, RoTxn, RwTxn, Unspecified};
 use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 
 mod keys;
-mod roaring;
+pub mod roaring;
 #[cfg(test)]
 mod test;
 
