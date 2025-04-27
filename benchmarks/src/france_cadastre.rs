@@ -5,7 +5,7 @@ use std::{fs, io::BufReader};
 use flate2::bufread::GzDecoder;
 use geojson::{GeoJson, de::deserialize_feature_collection_to_vec};
 
-pub fn parse() -> impl Iterator<Item = GeoJson> {
+pub fn parse() -> impl Iterator<Item = (String, GeoJson)> {
     fs::read_dir("assets/cadastre").unwrap().flat_map(|entry| {
         let dir = entry.unwrap();
         println!("Importing {}", dir.path().display());
@@ -15,6 +15,6 @@ pub fn parse() -> impl Iterator<Item = GeoJson> {
         let input: Vec<serde_json::Value> = deserialize_feature_collection_to_vec(file).unwrap();
         input
             .into_iter()
-            .map(|value| GeoJson::from_json_value(value["geometry"].clone()).unwrap())
+            .map(|value| (format!("{} {}, {}", value["numero"].as_str().unwrap(), value["nomVoie"].as_str().unwrap().to_lowercase(), value["codeCommune"].as_str().unwrap()), GeoJson::from_json_value(value["geometry"].clone()).unwrap()))
     })
 }

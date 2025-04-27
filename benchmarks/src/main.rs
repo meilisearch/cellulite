@@ -1,10 +1,11 @@
-use std::{path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use cellulite::{Database, Writer};
+use cellulite::{roaring::RoaringBitmapCodec, Database, Writer};
 use clap::{Parser, ValueEnum};
 use france_regions::{gard, le_vigan, nimes, occitanie};
 use geojson::GeoJson;
-use heed::EnvOpenOptions;
+use heed::{types::{Bytes, Str}, EnvOpenOptions};
+use roaring::RoaringBitmap;
 use tempfile::TempDir;
 
 mod france_cadastre;
@@ -20,6 +21,15 @@ struct Args {
     /// Skip indexing if set. You must provide the path to a database
     #[arg(long, default_value_t = false)]
     skip_indexing: bool,
+
+    /// Index metadata if set. Only valid if skip_indexing is false.
+    /// This will create a new database for the metadata which will
+    /// significantly slow down the indexing process. It should not
+    /// be set when doing actual benchmarks.
+    /// It also consume a lot of memory as we must stores all the strings
+    /// of the whole dataset in memory.
+    #[arg(long, default_value_t = false, conflicts_with = "skip_indexing")]
+    index_metadata: bool,
 
     /// Skip query if set
     #[arg(long, default_value_t = false)]
@@ -42,8 +52,8 @@ fn main() {
     println!("Starting...");
     let time = std::time::Instant::now();
     let input = match args.dataset {
-        Dataset::Shop => &mut france_shops::parse() as &mut dyn Iterator<Item = GeoJson>,
-        Dataset::Cadastre => &mut france_cadastre::parse() as &mut dyn Iterator<Item = GeoJson>,
+        Dataset::Shop => &mut france_shops::parse() as &mut dyn Iterator<Item = (String, GeoJson)>,
+        Dataset::Cadastre => &mut france_cadastre::parse() as &mut dyn Iterator<Item = (String, GeoJson)>,
     };
 
     println!("Deserialized the points in {:?}", time.elapsed());
@@ -63,14 +73,18 @@ fn main() {
     let env = unsafe {
         EnvOpenOptions::new()
             .map_size(200 * 1024 * 1024 * 1024)
+            .max_dbs(2)
             .open(path)
     }
     .unwrap();
     let mut wtxn = env.write_txn().unwrap();
     let database: Database = env.create_database(&mut wtxn, None).unwrap();
+    let metadata: heed::Database<Str, Bytes> = env.create_database(&mut wtxn, Some("metadata")).unwrap();
     wtxn.commit().unwrap();
 
     if !args.skip_indexing {
+        let mut metadata_builder: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
+
         println!("Inserting points");
         let time = std::time::Instant::now();
         let mut cpt = 0;
@@ -78,7 +92,7 @@ fn main() {
         let mut wtxn = env.write_txn().unwrap();
 
         let mut print_timer = time;
-        for coord in input {
+        for (name, geometry) in input {
             cpt += 1;
             if print_timer.elapsed() > Duration::from_secs(10) {
                 let elapsed = time.elapsed();
@@ -88,7 +102,21 @@ fn main() {
                 );
                 print_timer = std::time::Instant::now();
             }
-            writer.add_item(&mut wtxn, cpt, &coord).unwrap();
+            writer.add_item(&mut wtxn, cpt, &geometry).unwrap();
+            if args.index_metadata {
+                metadata_builder.entry(name).or_default().insert(cpt);
+            }
+        }
+        // If the metadata should be indexed, we must build an fst containing
+        // all the names.
+        if args.index_metadata {
+            let mut fst_builder = fst::MapBuilder::memory();
+            for (idx, (name, bitmap)) in metadata_builder.iter().enumerate() {
+                metadata.remap_data_type::<RoaringBitmapCodec>().put(&mut wtxn, &format!("bitmap_{idx:010}"), &bitmap).unwrap();
+                fst_builder.insert(name, idx as u64).unwrap();
+            }
+            let fst = fst_builder.into_inner().unwrap();
+            metadata.put(&mut wtxn, &"fst", &fst).unwrap();
         }
         wtxn.commit().unwrap();
 
