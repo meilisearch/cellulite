@@ -132,22 +132,7 @@ impl Runner {
                     builder_next = fst_builder_iter.next();
                 }
                 std::cmp::Ordering::Equal => {
-                    // Keys are equal, merge the bitmaps
-                    let mut bitmap = self
-                        .metadata
-                        .remap_data_type::<RoaringBitmapCodec>()
-                        .get(wtxn, &format!("bitmap_{fst_value:010}"))
-                        .unwrap()
-                        .unwrap();
-                    bitmap |= builder_bitmap;
-                    self.metadata
-                        .remap_data_type::<RoaringBitmapCodec>()
-                        .put(wtxn, &format!("bitmap_{fst_value:010}"), &bitmap)
-                        .unwrap();
-                    builder.insert(fst_key, fst_value).unwrap();
-                    fst_next = fst_stream.next();
-                    builder_next = fst_builder_iter.next();
-                    todo!("should nto happen");
+                    todo!("should never happen");
                 }
             }
         }

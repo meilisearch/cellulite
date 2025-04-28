@@ -3,15 +3,15 @@ use std::sync::{
     Arc,
 };
 
-use egui::{Color32, Ui, Vec2};
+use egui::{Color32, Ui};
 use egui_double_slider::DoubleSlider;
-use geo::{Intersects, Point, Rect};
+use geo::Intersects;
 use h3o::Resolution;
 use walkers::Plugin;
 
 use crate::{
     runner::Runner,
-    utils::{display_cell, draw_geometry_on_map},
+    utils::{display_cell, draw_geometry_on_map, extract_displayed_rect},
 };
 
 /// Plugin used to display the cells
@@ -77,15 +77,7 @@ impl Plugin for DisplayDbContent {
         _response: &egui::Response,
         projector: &walkers::Projector,
     ) {
-        let x = ui.available_width();
-        let y = ui.available_height();
-        let top_left = projector.unproject(Vec2 { x: 0.0, y: 0.0 });
-        let bottom_right = projector.unproject(Vec2 { x, y });
-        let displayed_rect = Rect::new(
-            Point::new(top_left.x(), top_left.y()),
-            Point::new(bottom_right.x(), bottom_right.y()),
-        );
-
+        let displayed_rect = extract_displayed_rect(ui, projector);
         let painter = ui.painter();
 
         if self.display_db_cells.load(Ordering::Relaxed) {
