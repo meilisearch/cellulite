@@ -25,6 +25,7 @@ pub enum InsertMode {
 #[derive(Clone)]
 pub struct InsertIntoDatabase {
     pub insert_mode: Arc<Mutex<InsertMode>>,
+    insert_name: String,
     insert_shape: Arc<Mutex<Vec<Coord>>>,
     runner: Runner,
     pub filtering: Arc<AtomicBool>,
@@ -37,6 +38,7 @@ impl InsertIntoDatabase {
             insert_shape: Arc::default(),
             runner,
             filtering: Arc::default(),
+            insert_name: String::new(),
         }
     }
 
@@ -44,13 +46,16 @@ impl InsertIntoDatabase {
         for _ in 0..n {
             let lat = rand::random_range(-90.0..=90.0);
             let lng = rand::random_range(-180.0..=180.0);
-            self.runner.add_shape(geojson::Value::Point(vec![lng, lat]));
+            self.runner.add_shape(self.insert_name.clone(), geojson::Value::Point(vec![lng, lat]));
         }
     }
 
-    pub fn ui(&self, ui: &mut Ui) {
+    pub fn ui(&mut self, ui: &mut Ui) {
         ui.collapsing(RichText::new("Insert").heading(), |ui| {
             let mut insert_mode = self.insert_mode.lock();
+
+            ui.label("Name of the shape:");
+            ui.text_edit_singleline(&mut self.insert_name);
 
             egui::ComboBox::from_label("Geometry to insert")
                 .selected_text(format!("{insert_mode:?}"))
@@ -75,7 +80,7 @@ impl InsertIntoDatabase {
                                 .into_iter()
                                 .map(|coord| vec![coord.x, coord.y])
                                 .collect();
-                            self.runner.add_shape(geojson::Value::MultiPoint(points));
+                            self.runner.add_shape(self.insert_name.clone(), geojson::Value::MultiPoint(points));
                         }
                         if ui.button("Clear points").clicked() {
                             points.clear();
@@ -94,7 +99,7 @@ impl InsertIntoDatabase {
                             // Close the polygon by adding the first point at the end
                             polygon_points.push(polygon_points[0].clone());
                             self.runner
-                                .add_shape(geojson::Value::Polygon(vec![polygon_points]));
+                                .add_shape(self.insert_name.clone(), geojson::Value::Polygon(vec![polygon_points]));
                             points.clear();
                         }
                     }
@@ -167,7 +172,7 @@ impl Plugin for InsertIntoDatabase {
                 InsertMode::Point => {
                     let pos = projector.unproject(Vec2::new(pos.x, pos.y));
                     self.runner
-                        .add_shape(geojson::Value::Point(vec![pos.x(), pos.y()]));
+                        .add_shape(self.insert_name.clone(), geojson::Value::Point(vec![pos.x(), pos.y()]));
                 }
                 InsertMode::MultiPoint => {
                     let pos = projector.unproject(Vec2::new(pos.x, pos.y));
