@@ -64,6 +64,11 @@ impl ItemsInspector {
                 .clone()
                 .starts_with()
                 .intersection(base.clone().complement());
+            self.search_fst(&*fst, base.clone(), &mut result);
+            let lev = Levenshtein::new(&self.query, self.query.len() as u32/3).unwrap();
+            let base = lev
+                .starts_with()
+                .intersection(base.complement());
             self.search_fst(&*fst, base, &mut result);
             ui.label(format!("result: {:?}", result.len()));
             ui.separator();
