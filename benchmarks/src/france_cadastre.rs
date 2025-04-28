@@ -13,8 +13,16 @@ pub fn parse() -> impl Iterator<Item = (String, GeoJson)> {
         let file = BufReader::new(file);
         let file = GzDecoder::new(file);
         let input: Vec<serde_json::Value> = deserialize_feature_collection_to_vec(file).unwrap();
-        input
-            .into_iter()
-            .map(|value| (format!("{} {}, {}", value["numero"].as_str().unwrap(), value["nomVoie"].as_str().unwrap().to_lowercase(), value["codeCommune"].as_str().unwrap()), GeoJson::from_json_value(value["geometry"].clone()).unwrap()))
+        input.into_iter().map(|value| {
+            (
+                format!(
+                    "{} {}, {}",
+                    value["numero"].as_str().unwrap(),
+                    value["nomVoie"].as_str().unwrap().to_lowercase(),
+                    value["codeCommune"].as_str().unwrap()
+                ),
+                GeoJson::from_json_value(value["geometry"].clone()).unwrap(),
+            )
+        })
     })
 }

@@ -1,8 +1,10 @@
 use std::{
-    collections::BTreeMap, sync::{
+    collections::BTreeMap,
+    sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
-    }, time::Duration
+    },
+    time::Duration,
 };
 
 use cellulite::{roaring::RoaringBitmapCodec, FilteringStep, Stats, Writer};
@@ -11,7 +13,10 @@ use fst::{IntoStreamer, Map, MapBuilder, Streamer};
 use geo_types::{Coord, LineString, Polygon};
 use geojson::GeoJson;
 use h3o::CellIndex;
-use heed::{types::{Bytes, Str}, Database, Env};
+use heed::{
+    types::{Bytes, Str},
+    Database, Env,
+};
 use roaring::RoaringBitmap;
 
 #[derive(Clone)]
@@ -72,12 +77,22 @@ impl Runner {
         self.wake_up.signal();
     }
 
-    fn merge_fst_and_bitmaps(&self, wtxn: &mut heed::RwTxn, current_fst: &Map<Vec<u8>>, fst_builder: BTreeMap<&str, RoaringBitmap>) {
+    fn merge_fst_and_bitmaps(
+        &self,
+        wtxn: &mut heed::RwTxn,
+        current_fst: &Map<Vec<u8>>,
+        fst_builder: BTreeMap<&str, RoaringBitmap>,
+    ) {
         // Retrieve the last bitmap id
-        let mut last_bitmap_id = self.metadata.rev_prefix_iter(wtxn, "bitmap_").unwrap().next().map_or(0, |ret| {
-            let (key, _) = ret.unwrap();
-            key["bitmap_".len()..].parse::<usize>().unwrap()
-        });
+        let mut last_bitmap_id = self
+            .metadata
+            .rev_prefix_iter(wtxn, "bitmap_")
+            .unwrap()
+            .next()
+            .map_or(0, |ret| {
+                let (key, _) = ret.unwrap();
+                key["bitmap_".len()..].parse::<usize>().unwrap()
+            });
 
         // Create a new FST builder
         let mut builder = MapBuilder::new(Vec::new()).unwrap();
@@ -105,15 +120,30 @@ impl Runner {
                 std::cmp::Ordering::Greater => {
                     // Builder key comes first
                     last_bitmap_id += 1;
-                    self.metadata.remap_data_type::<RoaringBitmapCodec>().put(wtxn, &format!("bitmap_{last_bitmap_id:010}"), &builder_bitmap).unwrap();
+                    self.metadata
+                        .remap_data_type::<RoaringBitmapCodec>()
+                        .put(
+                            wtxn,
+                            &format!("bitmap_{last_bitmap_id:010}"),
+                            &builder_bitmap,
+                        )
+                        .unwrap();
                     builder.insert(&builder_key, last_bitmap_id as u64).unwrap();
                     builder_next = fst_builder_iter.next();
                 }
                 std::cmp::Ordering::Equal => {
                     // Keys are equal, merge the bitmaps
-                    let mut bitmap = self.metadata.remap_data_type::<RoaringBitmapCodec>().get(wtxn, &format!("bitmap_{fst_value:010}")).unwrap().unwrap();
+                    let mut bitmap = self
+                        .metadata
+                        .remap_data_type::<RoaringBitmapCodec>()
+                        .get(wtxn, &format!("bitmap_{fst_value:010}"))
+                        .unwrap()
+                        .unwrap();
                     bitmap |= builder_bitmap;
-                    self.metadata.remap_data_type::<RoaringBitmapCodec>().put(wtxn, &format!("bitmap_{fst_value:010}"), &bitmap).unwrap();
+                    self.metadata
+                        .remap_data_type::<RoaringBitmapCodec>()
+                        .put(wtxn, &format!("bitmap_{fst_value:010}"), &bitmap)
+                        .unwrap();
                     builder.insert(fst_key, fst_value).unwrap();
                     fst_next = fst_stream.next();
                     builder_next = fst_builder_iter.next();
@@ -131,7 +161,10 @@ impl Runner {
         // Add remaining entries from builder
         while let Some((name, bitmap)) = builder_next.as_ref() {
             last_bitmap_id += 1;
-            self.metadata.remap_data_type::<RoaringBitmapCodec>().put(wtxn, &format!("bitmap_{last_bitmap_id:010}"), &bitmap).unwrap();
+            self.metadata
+                .remap_data_type::<RoaringBitmapCodec>()
+                .put(wtxn, &format!("bitmap_{last_bitmap_id:010}"), &bitmap)
+                .unwrap();
             builder.insert(name, last_bitmap_id as u64).unwrap();
             builder_next = fst_builder_iter.next();
         }
@@ -186,9 +219,17 @@ impl Runner {
                     let id = self.last_id.fetch_add(1, Ordering::Relaxed);
                     match current_fst.get(name.as_bytes()) {
                         Some(bitmap_id) => {
-                            let mut bitmap = self.metadata.remap_data_type::<RoaringBitmapCodec>().get(&wtxn, &format!("bitmap_{bitmap_id:010}")).unwrap().unwrap();
+                            let mut bitmap = self
+                                .metadata
+                                .remap_data_type::<RoaringBitmapCodec>()
+                                .get(&wtxn, &format!("bitmap_{bitmap_id:010}"))
+                                .unwrap()
+                                .unwrap();
                             bitmap.insert(id);
-                            self.metadata.remap_data_type::<RoaringBitmapCodec>().put(&mut wtxn, &format!("bitmap_{bitmap_id:010}"), &bitmap).unwrap();
+                            self.metadata
+                                .remap_data_type::<RoaringBitmapCodec>()
+                                .put(&mut wtxn, &format!("bitmap_{bitmap_id:010}"), &bitmap)
+                                .unwrap();
                         }
                         None => {
                             fst_builder.entry(name).or_default().insert(id);
@@ -218,7 +259,7 @@ impl Runner {
                         all_db_cells.push((cell, bitmap.len() as usize));
                     }
                     *self.all_db_cells.lock() = all_db_cells;
-    
+
                     *self.stats.lock() = self.db.stats(&wtxn).unwrap();
                 }
 

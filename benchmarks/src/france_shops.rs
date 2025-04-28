@@ -38,7 +38,20 @@ pub fn parse() -> impl Iterator<Item = (String, GeoJson)> {
     input
         .features
         .into_iter()
-        .map(|feature| (feature.properties.name.unwrap_or_else(|| feature.properties.shop.unwrap_or_default()), feature.geometry.coordinates))
+        .map(|feature| {
+            (
+                feature
+                    .properties
+                    .name
+                    .unwrap_or_else(|| feature.properties.shop.unwrap_or_default()),
+                feature.geometry.coordinates,
+            )
+        })
         .map(move |(shop, [x, y])| (shop, projection.convert((x, y)).unwrap()))
-        .map(|(shop, (lat, lng))| (shop, GeoJson::Geometry(geojson::Geometry::new(Value::Point(vec![lat, lng])))))
+        .map(|(shop, (lat, lng))| {
+            (
+                shop,
+                GeoJson::Geometry(geojson::Geometry::new(Value::Point(vec![lat, lng]))),
+            )
+        })
 }
