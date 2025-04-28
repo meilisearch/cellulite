@@ -7,8 +7,9 @@ use fst::{
 };
 use geo::{Point, Rect};
 use walkers::{Plugin, Projector};
-use egui::text::{LayoutJob, TextFormat};
+use egui::text::LayoutJob;
 use egui::Color32;
+use egui_extras::syntax_highlighting::CodeTheme;
 
 use crate::{runner::Runner, utils::draw_geometry_on_map};
 
@@ -77,19 +78,25 @@ impl ItemsInspector {
                     &geometry
                 );
 
-                // Display the pretty JSON as a clickable code block with syntax highlighting
                 let mut code_str = pretty_geometry.clone();
-                let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
-                    let job = json_highlight(ui, string, wrap_width);
-                    ui.fonts(|f| f.layout_job(job))
+                let mut layouter = |ui: &egui::Ui, buf: &str, wrap_width: f32| {
+                    let mut layout_job = egui_extras::syntax_highlighting::highlight(
+                        ui.ctx(),
+                        ui.style(),
+                        &CodeTheme::from_style(ui.style()),
+                        buf,
+                        "json",
+                    );
+                    layout_job.wrap.max_width = wrap_width;
+                    ui.fonts(|f| f.layout_job(layout_job))
                 };
+
                 let text_edit = egui::TextEdit::multiline(&mut code_str)
-                    .font(egui::TextStyle::Monospace)
                     .code_editor()
-                    .desired_rows(10)
                     .desired_width(f32::INFINITY)
                     .layouter(&mut layouter)
                     .interactive(false);
+
                 let code_response = ui.add(text_edit).interact(Sense::click());
                 if code_response.clicked() {
                     ui.ctx().open_url(egui::output::OpenUrl {
@@ -153,125 +160,4 @@ impl Plugin for ItemsInspector {
             draw_geometry_on_map(projector, displayed_rect, painter, &geometry);
         }
     }
-}
-
-fn json_highlight(ui: &egui::Ui, json: &str, wrap_width: f32) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    let mut chars = json.chars().peekable();
-    let mut buf = String::new();
-    let mut push = |text: &str, color: Color32| {
-        let format = TextFormat {
-            font_id: egui::FontId::monospace(14.0),
-            color,
-            ..Default::default()
-        };
-        job.append(text, 0.0, format);
-    };
-    while let Some(&c) = chars.peek() {
-        match c {
-            '"' => {
-                if !buf.is_empty() {
-                    push(&buf, Color32::LIGHT_GRAY);
-                    buf.clear();
-                }
-                // Parse string
-                let mut s = String::new();
-                s.push(chars.next().unwrap()); // opening quote
-                while let Some(&next) = chars.peek() {
-                    s.push(next);
-                    chars.next();
-                    if next == '"' && !s.ends_with("\\\"") {
-                        break;
-                    }
-                }
-                push(&s, Color32::from_rgb(220, 180, 120)); // string color
-            }
-            '0'..='9' | '-' => {
-                if !buf.is_empty() {
-                    push(&buf, Color32::LIGHT_GRAY);
-                    buf.clear();
-                }
-                // Parse number
-                let mut s = String::new();
-                while let Some(&next) = chars.peek() {
-                    if next.is_ascii_digit() || next == '.' || next == '-' || next == 'e' || next == 'E' || next == '+' {
-                        s.push(next);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                push(&s, Color32::from_rgb(120, 200, 220)); // number color
-            }
-            't' | 'f' => {
-                if !buf.is_empty() {
-                    push(&buf, Color32::LIGHT_GRAY);
-                    buf.clear();
-                }
-                // Parse true/false
-                let mut s = String::new();
-                for _ in 0..5 {
-                    if let Some(&next) = chars.peek() {
-                        if next.is_ascii_alphabetic() {
-                            s.push(next);
-                            chars.next();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                let color = if s == "true" || s == "false" {
-                    Color32::from_rgb(180, 220, 120)
-                } else {
-                    Color32::LIGHT_GRAY
-                };
-                push(&s, color);
-            }
-            'n' => {
-                if !buf.is_empty() {
-                    push(&buf, Color32::LIGHT_GRAY);
-                    buf.clear();
-                }
-                // Parse null
-                let mut s = String::new();
-                for _ in 0..4 {
-                    if let Some(&next) = chars.peek() {
-                        if next.is_ascii_alphabetic() {
-                            s.push(next);
-                            chars.next();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                let color = if s == "null" {
-                    Color32::from_rgb(180, 120, 220)
-                } else {
-                    Color32::LIGHT_GRAY
-                };
-                push(&s, color);
-            }
-            '{' | '}' | '[' | ']' | ':' | ',' => {
-                if !buf.is_empty() {
-                    push(&buf, Color32::LIGHT_GRAY);
-                    buf.clear();
-                }
-                push(&c.to_string(), Color32::WHITE);
-                chars.next();
-            }
-            c if c.is_whitespace() => {
-                buf.push(c);
-                chars.next();
-            }
-            _ => {
-                buf.push(c);
-                chars.next();
-            }
-        }
-    }
-    if !buf.is_empty() {
-        push(&buf, Color32::LIGHT_GRAY);
-    }
-    job.wrap.max_width = wrap_width;
-    job
 }
