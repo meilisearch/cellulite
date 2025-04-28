@@ -3,15 +3,15 @@ use std::sync::{
     Arc,
 };
 
-use egui::{epaint::PathStroke, Color32, Ui, Vec2};
+use egui::{Color32, Ui, Vec2};
 use egui_double_slider::DoubleSlider;
-use geo::{Contains, Intersects, Point, Rect};
+use geo::{Intersects, Point, Rect};
 use h3o::Resolution;
-use walkers::{Plugin, Position};
+use walkers::Plugin;
 
 use crate::{
     runner::Runner,
-    utils::{display_cell, draw_orthogonal_cross},
+    utils::{display_cell, draw_geometry_on_map},
 };
 
 /// Plugin used to display the cells
@@ -117,44 +117,7 @@ impl Plugin for DisplayDbContent {
 
         if self.display_items.load(Ordering::Relaxed) {
             for value in self.runner.all_items.lock().iter() {
-                match value {
-                    geojson::Value::Point(coords) => {
-                        let coord = h3o::LatLng::new(coords[1], coords[0]).unwrap();
-                        if !displayed_rect.contains(&Point::new(coord.lng(), coord.lat())) {
-                            continue;
-                        }
-                        let center = projector.project(Position::new(coord.lng(), coord.lat()));
-                        draw_orthogonal_cross(&painter, center.to_pos2(), Color32::BLACK);
-                    }
-                    geojson::Value::MultiPoint(coords) => {
-                        for coord in coords {
-                            let coord = h3o::LatLng::new(coord[1], coord[0]).unwrap();
-                            if !displayed_rect.contains(&Point::new(coord.lng(), coord.lat())) {
-                                continue;
-                            }
-                            let center = projector.project(Position::new(coord.lng(), coord.lat()));
-                            draw_orthogonal_cross(&painter, center.to_pos2(), Color32::BLACK);
-                        }
-                    }
-                    geojson::Value::Polygon(coords) => {
-                        let polygon: geo::Polygon =
-                            geojson::Value::Polygon(coords.clone()).try_into().unwrap();
-
-                        if polygon.intersects(&displayed_rect) {
-                            let points: Vec<_> = polygon
-                                .exterior()
-                                .points()
-                                .map(|point| {
-                                    let pos =
-                                        projector.project(Position::new(point.x(), point.y()));
-                                    pos.to_pos2()
-                                })
-                                .collect();
-                            painter.line(points, PathStroke::new(4.0, Color32::BLACK));
-                        }
-                    }
-                    _ => todo!(),
-                }
+                draw_geometry_on_map(projector, displayed_rect, painter, value)
             }
         }
     }

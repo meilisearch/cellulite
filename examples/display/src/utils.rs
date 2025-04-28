@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use egui::{epaint::PathStroke, Color32, Painter, Pos2, Vec2};
+use geo::{Contains, Intersects, Point, Rect};
 use geo_types::Coord;
 use h3o::CellIndex;
 use walkers::{Position, Projector};
@@ -86,4 +87,50 @@ pub fn draw_orthogonal_cross(painter: &Painter, point: Pos2, color: Color32) {
         vec![point + Vec2::new(0.0, -size), point + Vec2::new(0.0, size)],
         PathStroke::new(stroke_width, color),
     );
+}
+
+/// Draw geometrical shape on map
+
+pub fn draw_geometry_on_map(
+    projector: &walkers::Projector,
+    displayed_rect: Rect,
+    painter: &egui::Painter,
+    value: &geojson::Value,
+) {
+    match value {
+        geojson::Value::Point(coords) => {
+            let coord = h3o::LatLng::new(coords[1], coords[0]).unwrap();
+            if !displayed_rect.contains(&Point::new(coord.lng(), coord.lat())) {
+                return;
+            }
+            let center = projector.project(Position::new(coord.lng(), coord.lat()));
+            draw_orthogonal_cross(&painter, center.to_pos2(), Color32::BLACK);
+        }
+        geojson::Value::MultiPoint(coords) => {
+            for coord in coords {
+                let coord = h3o::LatLng::new(coord[1], coord[0]).unwrap();
+                if !displayed_rect.contains(&Point::new(coord.lng(), coord.lat())) {
+                    continue;
+                }
+                let center = projector.project(Position::new(coord.lng(), coord.lat()));
+                draw_orthogonal_cross(&painter, center.to_pos2(), Color32::BLACK);
+            }
+        }
+        geojson::Value::Polygon(coords) => {
+            let polygon: geo::Polygon = geojson::Value::Polygon(coords.clone()).try_into().unwrap();
+
+            if polygon.intersects(&displayed_rect) {
+                let points: Vec<_> = polygon
+                    .exterior()
+                    .points()
+                    .map(|point| {
+                        let pos = projector.project(Position::new(point.x(), point.y()));
+                        pos.to_pos2()
+                    })
+                    .collect();
+                painter.line(points, PathStroke::new(4.0, Color32::BLACK));
+            }
+        }
+        _ => todo!(),
+    }
 }
