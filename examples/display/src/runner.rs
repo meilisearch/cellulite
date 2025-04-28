@@ -1,26 +1,28 @@
 use std::{
-    sync::{
+    collections::BTreeMap, sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
-    },
-    time::Duration,
+    }, time::Duration
 };
 
-use cellulite::{FilteringStep, Stats, Writer};
+use cellulite::{roaring::RoaringBitmapCodec, FilteringStep, Stats, Writer};
 use egui::mutex::Mutex;
+use fst::{IntoStreamer, Map, MapBuilder, Streamer};
 use geo_types::{Coord, LineString, Polygon};
 use geojson::GeoJson;
 use h3o::CellIndex;
-use heed::Env;
+use heed::{types::{Bytes, Str}, Database, Env};
+use roaring::RoaringBitmap;
 
 #[derive(Clone)]
 pub struct Runner {
-    env: Env,
+    pub env: Env,
     pub db: Writer,
+    pub metadata: Database<Str, Bytes>,
     pub wake_up: Arc<synchronoise::SignalEvent>,
 
     // Communication input
-    pub to_insert: Arc<Mutex<Vec<geojson::Value>>>,
+    pub to_insert: Arc<Mutex<Vec<(String, geojson::Value)>>>,
     pub polygon_filter: Arc<Mutex<Vec<Coord<f64>>>>,
 
     // Communication output
@@ -32,6 +34,7 @@ pub struct Runner {
     last_id: Arc<AtomicU32>,
     pub all_items: Arc<Mutex<Vec<geojson::Value>>>,
     pub all_db_cells: Arc<Mutex<Vec<(CellIndex, usize)>>>,
+    pub fst: Arc<Mutex<fst::Map<Vec<u8>>>>,
 }
 
 pub struct FilterStats {
@@ -42,10 +45,11 @@ pub struct FilterStats {
 }
 
 impl Runner {
-    pub fn new(env: Env, db: Writer) -> Self {
+    pub fn new(env: Env, db: Writer, metadata: Database<Str, Bytes>) -> Self {
         let this = Self {
             env,
             db,
+            metadata,
             wake_up: Arc::new(synchronoise::SignalEvent::auto(true)),
             to_insert: Arc::default(),
             last_id: Arc::default(),
@@ -55,16 +59,88 @@ impl Runner {
             stats: Arc::default(),
             filter_stats: Arc::default(),
             points_matched: Arc::default(),
+            fst: Arc::new(Mutex::new(Map::default())),
         };
         this.clone().run();
         this
     }
 
-    pub fn add_shape(&self, value: geojson::Value) {
+    pub fn add_shape(&self, name: String, value: geojson::Value) {
         // We still need to update all_items for visualization purposes
         self.all_items.lock().push(value.clone());
-        self.to_insert.lock().push(value);
+        self.to_insert.lock().push((name, value));
         self.wake_up.signal();
+    }
+
+    fn merge_fst_and_bitmaps(&self, wtxn: &mut heed::RwTxn, current_fst: &Map<Vec<u8>>, fst_builder: BTreeMap<&str, RoaringBitmap>) {
+        // Retrieve the last bitmap id
+        let mut last_bitmap_id = self.metadata.rev_prefix_iter(wtxn, "bitmap_").unwrap().next().map_or(0, |ret| {
+            let (key, _) = ret.unwrap();
+            key["bitmap_".len()..].parse::<usize>().unwrap()
+        });
+
+        // Create a new FST builder
+        let mut builder = MapBuilder::new(Vec::new()).unwrap();
+
+        // Create iterators for both sources
+        let mut fst_stream = current_fst.into_stream();
+        let mut fst_builder_iter = fst_builder.into_iter();
+
+        // Get the first entries from both sources
+        let mut fst_next = fst_stream.next();
+        let mut builder_next = fst_builder_iter.next();
+
+        // Merge the entries in lexicographic order
+        while let (Some(fst_entry), Some(builder_entry)) = (fst_next, builder_next.as_ref()) {
+            let (fst_key, fst_value) = fst_entry;
+            let (builder_key, builder_bitmap) = builder_entry;
+
+            // Compare the keys
+            match fst_key.cmp(builder_key.as_bytes()) {
+                std::cmp::Ordering::Less => {
+                    // FST key comes first
+                    builder.insert(fst_key, fst_value).unwrap();
+                    fst_next = fst_stream.next();
+                }
+                std::cmp::Ordering::Greater => {
+                    // Builder key comes first
+                    last_bitmap_id += 1;
+                    self.metadata.remap_data_type::<RoaringBitmapCodec>().put(wtxn, &format!("bitmap_{last_bitmap_id:010}"), &builder_bitmap).unwrap();
+                    builder.insert(&builder_key, last_bitmap_id as u64).unwrap();
+                    builder_next = fst_builder_iter.next();
+                }
+                std::cmp::Ordering::Equal => {
+                    // Keys are equal, merge the bitmaps
+                    let mut bitmap = self.metadata.remap_data_type::<RoaringBitmapCodec>().get(wtxn, &format!("bitmap_{fst_value:010}")).unwrap().unwrap();
+                    bitmap |= builder_bitmap;
+                    self.metadata.remap_data_type::<RoaringBitmapCodec>().put(wtxn, &format!("bitmap_{fst_value:010}"), &bitmap).unwrap();
+                    builder.insert(fst_key, fst_value).unwrap();
+                    fst_next = fst_stream.next();
+                    builder_next = fst_builder_iter.next();
+                    todo!("should nto happen");
+                }
+            }
+        }
+
+        // Add remaining entries from FST
+        while let Some((key, value)) = fst_next {
+            builder.insert(key, value).unwrap();
+            fst_next = fst_stream.next();
+        }
+
+        // Add remaining entries from builder
+        while let Some((name, bitmap)) = builder_next.as_ref() {
+            last_bitmap_id += 1;
+            self.metadata.remap_data_type::<RoaringBitmapCodec>().put(wtxn, &format!("bitmap_{last_bitmap_id:010}"), &bitmap).unwrap();
+            builder.insert(name, last_bitmap_id as u64).unwrap();
+            builder_next = fst_builder_iter.next();
+        }
+
+        // Build the new FST
+        let fst = builder.into_inner().unwrap();
+        // Store the new FST in the database
+        self.metadata.put(wtxn, "fst", &fst).unwrap();
+        *self.fst.lock() = Map::new(fst).unwrap();
     }
 
     fn run(self) {
@@ -92,15 +168,32 @@ impl Runner {
                 all_db_cells.push((cell, bitmap.len() as usize));
             }
             *self.all_db_cells.lock() = all_db_cells;
+            if let Some(fst) = self.metadata.get(&rtxn, "fst").unwrap() {
+                if fst.len() > 0 {
+                    *self.fst.lock() = Map::new(fst.to_vec()).unwrap();
+                }
+            }
             drop(rtxn);
 
             loop {
                 self.wake_up.wait();
                 let to_insert = std::mem::take(&mut *self.to_insert.lock());
                 let mut wtxn = self.env.write_txn().unwrap();
+                let current_fst = self.fst.lock().clone();
+                let mut fst_builder: BTreeMap<&str, RoaringBitmap> = BTreeMap::new();
 
-                for shape in to_insert.iter() {
+                for (name, shape) in to_insert.iter() {
                     let id = self.last_id.fetch_add(1, Ordering::Relaxed);
+                    match current_fst.get(name.as_bytes()) {
+                        Some(bitmap_id) => {
+                            let mut bitmap = self.metadata.remap_data_type::<RoaringBitmapCodec>().get(&wtxn, &format!("bitmap_{bitmap_id:010}")).unwrap().unwrap();
+                            bitmap.insert(id);
+                            self.metadata.remap_data_type::<RoaringBitmapCodec>().put(&mut wtxn, &format!("bitmap_{bitmap_id:010}"), &bitmap).unwrap();
+                        }
+                        None => {
+                            fst_builder.entry(name).or_default().insert(id);
+                        }
+                    }
                     self.db
                         .add_item(
                             &mut wtxn,
@@ -113,15 +206,19 @@ impl Runner {
                         )
                         .unwrap();
                 }
-                let mut all_db_cells = Vec::new();
-                for entry in self.db.inner_db_cells(&wtxn).unwrap() {
-                    let (cell, bitmap) = entry.unwrap();
-                    all_db_cells.push((cell, bitmap.len() as usize));
-                }
-                *self.all_db_cells.lock() = all_db_cells;
 
-                // We must recompute the stats
+                // We must recompute the fst, stats and db cells
                 if !to_insert.is_empty() {
+                    // Merge the FSTs and update the bitmaps
+                    self.merge_fst_and_bitmaps(&mut wtxn, &current_fst, fst_builder);
+
+                    let mut all_db_cells = Vec::new();
+                    for entry in self.db.inner_db_cells(&wtxn).unwrap() {
+                        let (cell, bitmap) = entry.unwrap();
+                        all_db_cells.push((cell, bitmap.len() as usize));
+                    }
+                    *self.all_db_cells.lock() = all_db_cells;
+    
                     *self.stats.lock() = self.db.stats(&wtxn).unwrap();
                 }
 

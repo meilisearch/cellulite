@@ -37,16 +37,17 @@ impl ExtractMousePos {
         let lat = self.clicked_lat.load(Ordering::Relaxed);
         let lng = self.clicked_lng.load(Ordering::Relaxed);
         ui.label(format!("Last click: {lat:.5},{lng:.5}",));
-
-        let lat_lng = LatLng::new(lat, lng).unwrap();
-        for res in Resolution::range(Resolution::Zero, Resolution::Fifteen) {
-            let cell = lat_lng.to_cell(res);
-            let cell = u64::from(cell);
-            ui.hyperlink_to(
-                format!("Resolution {res}: {cell:x}"),
-                format!("https://h3geo.org/#hex={cell:x}"),
-            );
-        }
+        ui.collapsing("H3 cells at the last click position", |ui| {
+            let lat_lng = LatLng::new(lat, lng).unwrap();
+            for res in Resolution::range(Resolution::Zero, Resolution::Fifteen) {
+                let cell = lat_lng.to_cell(res);
+                let cell = u64::from(cell);
+                ui.hyperlink_to(
+                    format!("Resolution {res}: {cell:x}"),
+                    format!("https://h3geo.org/#hex={cell:x}"),
+                );
+            }
+        });
     }
 }
 
