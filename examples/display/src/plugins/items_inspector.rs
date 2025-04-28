@@ -1,17 +1,13 @@
 use cellulite::roaring::RoaringBitmapCodec;
-use egui::{Response, RichText, ScrollArea, Sense, Ui, Vec2};
-use egui_code_editor::{CodeEditor, ColorTheme, Syntax};
+use egui::{Response, RichText, Sense, Ui};
 use fst::{
     automaton::{Levenshtein, Str},
     Automaton, IntoStreamer, Streamer,
 };
-use geo::{Point, Rect};
 use walkers::{Plugin, Projector};
-use egui::text::LayoutJob;
-use egui::Color32;
 use egui_extras::syntax_highlighting::CodeTheme;
 
-use crate::{runner::Runner, utils::draw_geometry_on_map};
+use crate::{runner::Runner, utils::{draw_geometry_on_map, extract_displayed_rect}};
 
 #[derive(Clone)]
 pub struct ItemsInspector {
@@ -67,46 +63,7 @@ impl ItemsInspector {
             ui.separator();
             if let Some((item, name, geometry)) = &self.selected {
                 let response = ui.selectable_label(true, format!("{}: {}", name, item));
-                let geojson_obj = geojson::Geometry {
-                    value: geometry.clone(),
-                    bbox: None,
-                    foreign_members: None,
-                };
-                let pretty_geometry = serde_json::to_string_pretty(&geojson_obj).unwrap();
-                let geojson_url = format!(
-                    "http://geojson.io/#data=data:application/json,{}",
-                    &geometry
-                );
-
-                let mut code_str = pretty_geometry.clone();
-                let mut layouter = |ui: &egui::Ui, buf: &str, wrap_width: f32| {
-                    let mut layout_job = egui_extras::syntax_highlighting::highlight(
-                        ui.ctx(),
-                        ui.style(),
-                        &CodeTheme::from_style(ui.style()),
-                        buf,
-                        "json",
-                    );
-                    layout_job.wrap.max_width = wrap_width;
-                    ui.fonts(|f| f.layout_job(layout_job))
-                };
-
-                let text_edit = egui::TextEdit::multiline(&mut code_str)
-                    .code_editor()
-                    .desired_width(f32::INFINITY)
-                    .layouter(&mut layouter)
-                    .interactive(false);
-
-                let code_response = ui.add(text_edit).interact(Sense::click());
-                if code_response.clicked() {
-                    ui.ctx().open_url(egui::output::OpenUrl {
-                        url: geojson_url,
-                        new_tab: true,
-                    });
-                }
-                if code_response.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                }
+                display_geojson_as_codeblock(ui, geometry);
 
                 // Handle deselection using the original label's response
                 if response.clicked() {
@@ -144,20 +101,56 @@ impl ItemsInspector {
     }
 }
 
+fn display_geojson_as_codeblock(ui: &mut Ui, geometry: &geojson::Value) {
+    let geojson_obj = geojson::Geometry {
+        value: geometry.clone(),
+        bbox: None,
+        foreign_members: None,
+    };
+    let pretty_geometry = serde_json::to_string_pretty(&geojson_obj).unwrap();
+    let geojson_url = format!(
+        "http://geojson.io/#data=data:application/json,{}",
+        &geometry
+    );
+
+    let mut code_str = pretty_geometry.clone();
+    let mut layouter = |ui: &egui::Ui, buf: &str, wrap_width: f32| {
+        let mut layout_job = egui_extras::syntax_highlighting::highlight(
+            ui.ctx(),
+            ui.style(),
+            &CodeTheme::from_style(ui.style()),
+            buf,
+            "json",
+        );
+        layout_job.wrap.max_width = wrap_width;
+        ui.fonts(|f| f.layout_job(layout_job))
+    };
+
+    let text_edit = egui::TextEdit::multiline(&mut code_str)
+        .code_editor()
+        .desired_width(f32::INFINITY)
+        .layouter(&mut layouter)
+        .interactive(false);
+
+    let code_response = ui.add(text_edit).interact(Sense::click());
+    if code_response.clicked() {
+        ui.ctx().open_url(egui::output::OpenUrl {
+            url: geojson_url,
+            new_tab: true,
+        });
+    }
+    if code_response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+}
+
 impl Plugin for ItemsInspector {
     fn run(self: Box<Self>, ui: &mut Ui, _response: &Response, projector: &Projector) {
         if let Some((_item, _name, geometry)) = self.selected {
-            let x = ui.available_width();
-            let y = ui.available_height();
-            let top_left = projector.unproject(Vec2 { x: 0.0, y: 0.0 });
-            let bottom_right = projector.unproject(Vec2 { x, y });
-            let displayed_rect = Rect::new(
-                Point::new(top_left.x(), top_left.y()),
-                Point::new(bottom_right.x(), bottom_right.y()),
-            );
-
+            let displayed_rect = extract_displayed_rect(ui, projector);
             let painter = ui.painter();
             draw_geometry_on_map(projector, displayed_rect, painter, &geometry);
         }
     }
 }
+

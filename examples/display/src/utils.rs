@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use egui::{epaint::PathStroke, Color32, Painter, Pos2, Vec2};
+use egui::{epaint::PathStroke, Color32, Painter, Pos2, Ui, Vec2};
 use geo::{Contains, Intersects, Point, Rect};
 use geo_types::Coord;
 use h3o::CellIndex;
@@ -133,4 +133,15 @@ pub fn draw_geometry_on_map(
         }
         _ => todo!(),
     }
+}
+
+pub fn extract_displayed_rect(ui: &mut Ui, projector: &Projector) -> Rect {
+    let x = ui.available_width();
+    let y = ui.available_height();
+    let top_left = projector.unproject(Vec2 { x: 0.0, y: 0.0 });
+    let bottom_right = projector.unproject(Vec2 { x, y });
+    Rect::new(
+        Point::new(top_left.x(), top_left.y()),
+        Point::new(bottom_right.x(), bottom_right.y()),
+    )
 }
