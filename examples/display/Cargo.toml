@@ -31,3 +31,4 @@ roaring.workspace = true
 geo = { workspace = true }
 geojson = { workspace = true }
 fst = { version = "0.4.7", features = ["levenshtein"] }
+serde_json = "1.0.140"
