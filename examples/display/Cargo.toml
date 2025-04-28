@@ -27,6 +27,7 @@ walkers = "0.35.0"
 geo-types = { workspace = true }
 rand = "0.9.0"
 synchronoise = "1.0.1"
-roaring = { workspace = true }
+roaring.workspace = true
 geo = { workspace = true }
 geojson = { workspace = true }
+fst = { version = "0.4.7", features = ["levenshtein"] }

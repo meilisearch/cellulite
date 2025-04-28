@@ -1,6 +1,6 @@
 use cellulite::{Database, Writer};
 use egui::{CentralPanel, RichText, Ui};
-use heed::{Env, EnvOpenOptions};
+use heed::{types::{Bytes, Str}, Env, EnvOpenOptions};
 use tempfile::TempDir;
 use walkers::{lon_lat, sources::OpenStreetMap, HttpTiles, Map, MapMemory};
 
@@ -26,6 +26,7 @@ pub struct App {
     insert_into_database: plugins::InsertIntoDatabase,
     display_db_content: plugins::DisplayDbContent,
     polygon_filtering: plugins::PolygonFiltering,
+    items_inspector: plugins::ItemsInspector,
 }
 
 impl App {
@@ -39,14 +40,14 @@ impl App {
             Some(path) => (None, path),
         };
 
-        let env = unsafe { EnvOpenOptions::new().map_size(200 * 1024 * 1024).open(path) }.unwrap();
+        let env = unsafe { EnvOpenOptions::new().map_size(200 * 1024 * 1024).max_dbs(2).open(path) }.unwrap();
         let mut wtxn = env.write_txn().unwrap();
         let database: Database = env.create_database(&mut wtxn, None).unwrap();
+        let metadata: heed::Database<Str, Bytes> = env.create_database(&mut wtxn, Some("metadata")).unwrap();
         wtxn.commit().unwrap();
         let db = Writer::new(database);
-        // db.threshold = 4;
 
-        let runner = Runner::new(env.clone(), db.clone());
+        let runner = Runner::new(env.clone(), db.clone(), metadata.clone());
         let insert_into_database = plugins::InsertIntoDatabase::new(runner.clone());
         let polygon_filtering =
             plugins::PolygonFiltering::new(runner.clone(), insert_into_database.clone());
@@ -57,6 +58,7 @@ impl App {
             extract_lat_lng: plugins::ExtractMousePos::default(),
             insert_into_database,
             display_db_content: plugins::DisplayDbContent::new(runner.clone()),
+            items_inspector: plugins::ItemsInspector::new(runner.clone()),
             polygon_filtering,
             env,
             db,
@@ -65,13 +67,14 @@ impl App {
         }
     }
 
-    pub fn side_panel(&self, ui: &mut Ui) {
+    pub fn side_panel(&mut self, ui: &mut Ui) {
         self.debug(ui);
         self.insert_into_database.ui(ui);
         self.polygon_filtering.ui(ui);
+        self.items_inspector.ui(ui);
     }
 
-    fn debug(&self, ui: &mut Ui) {
+    fn debug(&mut self, ui: &mut Ui) {
         ui.collapsing(RichText::new("Debug").heading(), |ui| {
             self.extract_lat_lng.ui(ui);
             if ui.button("Insert 1000 random points").clicked() {
