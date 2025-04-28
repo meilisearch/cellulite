@@ -1,13 +1,15 @@
 use cellulite::roaring::RoaringBitmapCodec;
-use egui::{Response, RichText, Ui};
+use egui::{Response, RichText, Ui, Vec2};
 use fst::{
-    automaton::{Complement, Levenshtein, Str},
+    automaton::{Levenshtein, Str},
     Automaton, IntoStreamer, Streamer,
 };
+use geo::{Point, Rect};
 use walkers::{Plugin, Projector};
 
-use crate::runner::Runner;
+use crate::{runner::Runner, utils::draw_geometry_on_map};
 
+#[derive(Clone)]
 pub struct ItemsInspector {
     pub query: String,
     pub runner: Runner,
@@ -65,10 +67,8 @@ impl ItemsInspector {
                 .starts_with()
                 .intersection(base.clone().complement());
             self.search_fst(&*fst, base.clone(), &mut result);
-            let lev = Levenshtein::new(&self.query, self.query.len() as u32/3).unwrap();
-            let base = lev
-                .starts_with()
-                .intersection(base.complement());
+            let lev = Levenshtein::new(&self.query, self.query.len() as u32 / 3).unwrap();
+            let base = lev.starts_with().intersection(base.complement());
             self.search_fst(&*fst, base, &mut result);
             ui.label(format!("result: {:?}", result.len()));
             ui.separator();
@@ -87,7 +87,19 @@ impl ItemsInspector {
 }
 
 impl Plugin for ItemsInspector {
-    fn run(self: Box<Self>, ui: &mut Ui, _response: &Response, _projector: &Projector) {
-        todo!()
+    fn run(self: Box<Self>, ui: &mut Ui, _response: &Response, projector: &Projector) {
+        if let Some((_item, _name, geometry)) = self.selected {
+            let x = ui.available_width();
+            let y = ui.available_height();
+            let top_left = projector.unproject(Vec2 { x: 0.0, y: 0.0 });
+            let bottom_right = projector.unproject(Vec2 { x, y });
+            let displayed_rect = Rect::new(
+                Point::new(top_left.x(), top_left.y()),
+                Point::new(bottom_right.x(), bottom_right.y()),
+            );
+
+            let painter = ui.painter();
+            draw_geometry_on_map(projector, displayed_rect, painter, &geometry);
+        }
     }
 }

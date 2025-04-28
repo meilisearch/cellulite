@@ -124,6 +124,7 @@ impl eframe::App for App {
                 .with_plugin(self.insert_into_database.clone())
                 .with_plugin(self.display_db_content.clone())
                 .with_plugin(self.polygon_filtering.clone())
+                .with_plugin(self.items_inspector.clone())
                 .zoom_speed(0.5),
             );
         });
