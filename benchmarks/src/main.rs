@@ -1,10 +1,13 @@
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use cellulite::{roaring::RoaringBitmapCodec, Database, Writer};
+use cellulite::{Database, Writer, roaring::RoaringBitmapCodec};
 use clap::{Parser, ValueEnum};
 use france_regions::{gard, le_vigan, nimes, occitanie};
 use geojson::GeoJson;
-use heed::{types::{Bytes, Str}, EnvOpenOptions};
+use heed::{
+    EnvOpenOptions,
+    types::{Bytes, Str},
+};
 use roaring::RoaringBitmap;
 use tempfile::TempDir;
 
@@ -53,7 +56,9 @@ fn main() {
     let time = std::time::Instant::now();
     let input = match args.dataset {
         Dataset::Shop => &mut france_shops::parse() as &mut dyn Iterator<Item = (String, GeoJson)>,
-        Dataset::Cadastre => &mut france_cadastre::parse() as &mut dyn Iterator<Item = (String, GeoJson)>,
+        Dataset::Cadastre => {
+            &mut france_cadastre::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+        }
     };
 
     println!("Deserialized the points in {:?}", time.elapsed());
@@ -79,7 +84,8 @@ fn main() {
     .unwrap();
     let mut wtxn = env.write_txn().unwrap();
     let database: Database = env.create_database(&mut wtxn, None).unwrap();
-    let metadata: heed::Database<Str, Bytes> = env.create_database(&mut wtxn, Some("metadata")).unwrap();
+    let metadata: heed::Database<Str, Bytes> =
+        env.create_database(&mut wtxn, Some("metadata")).unwrap();
     wtxn.commit().unwrap();
 
     if !args.skip_indexing {
@@ -112,7 +118,10 @@ fn main() {
         if args.index_metadata {
             let mut fst_builder = fst::MapBuilder::memory();
             for (idx, (name, bitmap)) in metadata_builder.iter().enumerate() {
-                metadata.remap_data_type::<RoaringBitmapCodec>().put(&mut wtxn, &format!("bitmap_{idx:010}"), &bitmap).unwrap();
+                metadata
+                    .remap_data_type::<RoaringBitmapCodec>()
+                    .put(&mut wtxn, &format!("bitmap_{idx:010}"), &bitmap)
+                    .unwrap();
                 fst_builder.insert(name, idx as u64).unwrap();
             }
             let fst = fst_builder.into_inner().unwrap();

@@ -1,6 +1,9 @@
 use cellulite::{Database, Writer};
 use egui::{CentralPanel, RichText, Ui};
-use heed::{types::{Bytes, Str}, Env, EnvOpenOptions};
+use heed::{
+    types::{Bytes, Str},
+    Env, EnvOpenOptions,
+};
 use tempfile::TempDir;
 use walkers::{lon_lat, sources::OpenStreetMap, HttpTiles, Map, MapMemory};
 
@@ -40,10 +43,17 @@ impl App {
             Some(path) => (None, path),
         };
 
-        let env = unsafe { EnvOpenOptions::new().map_size(200 * 1024 * 1024).max_dbs(2).open(path) }.unwrap();
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .map_size(200 * 1024 * 1024)
+                .max_dbs(2)
+                .open(path)
+        }
+        .unwrap();
         let mut wtxn = env.write_txn().unwrap();
         let database: Database = env.create_database(&mut wtxn, None).unwrap();
-        let metadata: heed::Database<Str, Bytes> = env.create_database(&mut wtxn, Some("metadata")).unwrap();
+        let metadata: heed::Database<Str, Bytes> =
+            env.create_database(&mut wtxn, Some("metadata")).unwrap();
         wtxn.commit().unwrap();
         let db = Writer::new(database);
 
