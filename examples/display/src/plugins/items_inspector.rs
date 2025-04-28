@@ -58,31 +58,50 @@ impl ItemsInspector {
     pub fn ui(&mut self, ui: &mut Ui) {
         ui.collapsing(RichText::new("Inspect item").heading(), |ui| {
             ui.text_edit_singleline(&mut self.query);
-            let fst = self.runner.fst.lock();
-            let mut result = Vec::with_capacity(50);
-            let base = Str::new(&self.query);
-            self.search_fst(&*fst, base.clone(), &mut result);
-            let base = base
-                .clone()
-                .starts_with()
-                .intersection(base.clone().complement());
-            self.search_fst(&*fst, base.clone(), &mut result);
-            let lev = Levenshtein::new(&self.query, self.query.len() as u32 / 3).unwrap();
-            let base = lev.starts_with().intersection(base.complement());
-            self.search_fst(&*fst, base, &mut result);
+            let result = self.search();
             ui.label(format!("result: {:?}", result.len()));
             ui.separator();
-            for (name, item) in result {
-                let responso = ui.selectable_label(
-                    self.selected.as_ref().map(|(id, _, _)| *id) == Some(item),
-                    format!("{}: {}", name, item),
+            if let Some((item, name, geometry)) = &self.selected {
+                let response = ui.selectable_label(true, format!("{}: {}", name, item));
+                ui.hyperlink_to(
+                    geometry.to_string(),
+                    format!(
+                        "http://geojson.io/#data=data:application/json,{}",
+                        geometry.to_string()
+                    ),
                 );
-                if responso.clicked() {
-                    let geometry = self.runner.all_items.lock()[item as usize].clone();
-                    self.selected = Some((item, name, geometry));
+                if response.clicked() {
+                    self.selected = None;
+                }
+            } else {
+                for (name, item) in result {
+                    let response = ui.selectable_label(
+                        self.selected.as_ref().map(|(id, _, _)| *id) == Some(item),
+                        format!("{}: {}", name, item),
+                    );
+                    if response.clicked() {
+                        let geometry = self.runner.all_items.lock()[item as usize].clone();
+                        self.selected = Some((item, name, geometry));
+                    }
                 }
             }
         });
+    }
+
+    fn search(&mut self) -> Vec<(String, u32)> {
+        let fst = self.runner.fst.lock();
+        let mut result = Vec::with_capacity(50);
+        let base = Str::new(&self.query);
+        self.search_fst(&*fst, base.clone(), &mut result);
+        let base = base
+            .clone()
+            .starts_with()
+            .intersection(base.clone().complement());
+        self.search_fst(&*fst, base.clone(), &mut result);
+        let lev = Levenshtein::new(&self.query, self.query.len() as u32 / 3).unwrap();
+        let base = lev.starts_with().intersection(base.complement());
+        self.search_fst(&*fst, base, &mut result);
+        result
     }
 }
 
