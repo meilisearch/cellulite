@@ -7,7 +7,9 @@ use fst::{
 use walkers::{Plugin, Projector};
 use egui_extras::syntax_highlighting::CodeTheme;
 use geo::Intersects;
-use h3o::{geom, CellIndex};
+use h3o::{geom, CellIndex, Resolution};
+use egui_double_slider::DoubleSlider;
+use std::ops::RangeInclusive;
 
 use crate::{runner::Runner, utils::{draw_geometry_on_map, extract_displayed_rect, display_cell}};
 
@@ -16,6 +18,7 @@ pub struct ItemsInspector {
     pub query: String,
     pub runner: Runner,
     pub selected: Option<(u32, String, geojson::Value, Vec<CellIndex>)>,
+    pub resolution_range: RangeInclusive<Resolution>,
 }
 
 impl ItemsInspector {
@@ -24,6 +27,7 @@ impl ItemsInspector {
             query: String::new(),
             runner,
             selected: None,
+            resolution_range: Resolution::Zero..=Resolution::Fifteen,
         }
     }
 
@@ -67,6 +71,20 @@ impl ItemsInspector {
                 let response = ui.selectable_label(true, format!("{}: {}", name, item));
                 display_geojson_as_codeblock(ui, geometry);
                 ui.label(format!("Made of {} cells", cells.len()));
+                
+                // Add resolution range slider
+                ui.horizontal(|ui| {
+                    ui.label("Resolution range:");
+                    let mut min = *self.resolution_range.start() as u8;
+                    let mut max = *self.resolution_range.end() as u8;
+                    let response = ui.add(DoubleSlider::new(&mut min, &mut max, 0..=15));
+                    
+                    if response.changed() {
+                        self.resolution_range = Resolution::try_from(min).unwrap_or(Resolution::Zero)
+                            ..=Resolution::try_from(max).unwrap_or(Resolution::Fifteen);
+                    }
+                });
+                
                 // Handle deselection using the original label's response
                 if response.clicked() {
                     self.selected = None;
@@ -157,12 +175,15 @@ impl Plugin for ItemsInspector {
 
             // Get the cells containing this document from the runner's all_db_cells
             for cell in cells.iter() {
-                let solvent = geom::SolventBuilder::new().build();
-                let cell_polygon = solvent.dissolve(Some(*cell)).unwrap();
-                let cell_polygon = &cell_polygon.0[0];
+                let resolution = cell.resolution();
+                if self.resolution_range.contains(&resolution) {
+                    let solvent = geom::SolventBuilder::new().build();
+                    let cell_polygon = solvent.dissolve(Some(*cell)).unwrap();
+                    let cell_polygon = &cell_polygon.0[0];
 
                     if cell_polygon.intersects(&displayed_rect) {
-                    display_cell(projector, painter, *cell, Color32::DARK_GREEN);
+                        display_cell(projector, painter, *cell, Color32::DARK_GREEN);
+                    }
                 }
             }
         }
