@@ -91,15 +91,15 @@ impl ItemsInspector {
     fn search(&mut self) -> Vec<(String, u32)> {
         let fst = self.runner.fst.lock();
         let mut result = Vec::with_capacity(50);
-        let base = Str::new(&self.query);
-        self.search_fst(&*fst, base.clone(), &mut result);
-        let base = base
+        let exact = Str::new(&self.query);
+        self.search_fst(&*fst, exact.clone(), &mut result);
+        let prefix = exact
             .clone()
             .starts_with()
-            .intersection(base.clone().complement());
-        self.search_fst(&*fst, base.clone(), &mut result);
+            .intersection(exact.clone().complement());
+        self.search_fst(&*fst, prefix.clone(), &mut result);
         let lev = Levenshtein::new(&self.query, self.query.len() as u32 / 3).unwrap();
-        let base = lev.starts_with().intersection(base.complement());
+        let base = lev.starts_with().intersection(exact.clone().starts_with().complement());
         self.search_fst(&*fst, base, &mut result);
         result
     }
