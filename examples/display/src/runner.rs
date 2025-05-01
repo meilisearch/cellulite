@@ -38,7 +38,7 @@ pub struct Runner {
     // Current state of the DB
     last_id: Arc<AtomicU32>,
     pub all_items: Arc<Mutex<Vec<geojson::Value>>>,
-    pub all_db_cells: Arc<Mutex<Vec<(CellIndex, usize)>>>,
+    pub all_db_cells: Arc<Mutex<Vec<(CellIndex, RoaringBitmap)>>>,
     pub fst: Arc<Mutex<fst::Map<Vec<u8>>>>,
 }
 
@@ -183,7 +183,7 @@ impl Runner {
             let mut all_db_cells = Vec::new();
             for entry in self.db.inner_db_cells(&rtxn).unwrap() {
                 let (cell, bitmap) = entry.unwrap();
-                all_db_cells.push((cell, bitmap.len() as usize));
+                all_db_cells.push((cell, bitmap));
             }
             *self.all_db_cells.lock() = all_db_cells;
             if let Some(fst) = self.metadata.get(&rtxn, "fst").unwrap() {
@@ -241,7 +241,7 @@ impl Runner {
                     let mut all_db_cells = Vec::new();
                     for entry in self.db.inner_db_cells(&wtxn).unwrap() {
                         let (cell, bitmap) = entry.unwrap();
-                        all_db_cells.push((cell, bitmap.len() as usize));
+                        all_db_cells.push((cell, bitmap));
                     }
                     *self.all_db_cells.lock() = all_db_cells;
 
