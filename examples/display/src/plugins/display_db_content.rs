@@ -84,7 +84,7 @@ impl Plugin for DisplayDbContent {
             let min = self.display_db_cells_min_res.load(Ordering::Relaxed);
             let max = self.display_db_cells_max_res.load(Ordering::Relaxed);
 
-            for (cell, nb_points) in self.runner.all_db_cells.lock().iter().copied() {
+            for (cell, bitmap) in self.runner.all_db_cells.lock().iter() {
                 if (min..max).contains(&(cell.resolution() as usize)) {
                     let boundary = cell.boundary();
                     let polygon = geo::Polygon::new(
@@ -96,10 +96,10 @@ impl Plugin for DisplayDbContent {
                         display_cell(
                             projector,
                             painter,
-                            cell,
+                            *cell,
                             Color32::BLUE.lerp_to_gamma(
                                 Color32::RED,
-                                nb_points as f32 / self.runner.db.threshold as f32,
+                                bitmap.len() as f32 / self.runner.db.threshold as f32,
                             ),
                         );
                     }
