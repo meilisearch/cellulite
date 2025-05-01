@@ -1,19 +1,21 @@
 use cellulite::roaring::RoaringBitmapCodec;
-use egui::{Response, RichText, Sense, Ui};
+use egui::{Response, RichText, Sense, Ui, Color32};
 use fst::{
     automaton::{Levenshtein, Str},
     Automaton, IntoStreamer, Streamer,
 };
 use walkers::{Plugin, Projector};
 use egui_extras::syntax_highlighting::CodeTheme;
+use geo::Intersects;
+use h3o::{geom, CellIndex};
 
-use crate::{runner::Runner, utils::{draw_geometry_on_map, extract_displayed_rect}};
+use crate::{runner::Runner, utils::{draw_geometry_on_map, extract_displayed_rect, display_cell}};
 
 #[derive(Clone)]
 pub struct ItemsInspector {
     pub query: String,
     pub runner: Runner,
-    pub selected: Option<(u32, String, geojson::Value)>,
+    pub selected: Option<(u32, String, geojson::Value, Vec<CellIndex>)>,
 }
 
 impl ItemsInspector {
@@ -61,10 +63,10 @@ impl ItemsInspector {
             let result = self.search();
             ui.label(format!("result: {:?}", result.len()));
             ui.separator();
-            if let Some((item, name, geometry)) = &self.selected {
+            if let Some((item, name, geometry, cells)) = &self.selected {
                 let response = ui.selectable_label(true, format!("{}: {}", name, item));
                 display_geojson_as_codeblock(ui, geometry);
-
+                ui.label(format!("Made of {} cells", cells.len()));
                 // Handle deselection using the original label's response
                 if response.clicked() {
                     self.selected = None;
@@ -72,12 +74,14 @@ impl ItemsInspector {
             } else {
                 for (name, item) in result {
                     let response = ui.selectable_label(
-                        self.selected.as_ref().map(|(id, _, _)| *id) == Some(item),
+                        self.selected.as_ref().map(|(id, _, _, _)| *id) == Some(item),
                         format!("{}: {}", name, item),
                     );
                     if response.clicked() {
                         let geometry = self.runner.all_items.lock()[item as usize].clone();
-                        self.selected = Some((item, name, geometry));
+                           // Get the cells containing this document from the runner's all_db_cells
+                        let cells = self.runner.all_db_cells.lock().iter().filter(|(_, bitmap)| bitmap.contains(item)).map(|(cell, _)| *cell).collect();
+                        self.selected = Some((item, name, geometry, cells));
                     }
                 }
             }
@@ -146,10 +150,21 @@ fn display_geojson_as_codeblock(ui: &mut Ui, geometry: &geojson::Value) {
 
 impl Plugin for ItemsInspector {
     fn run(self: Box<Self>, ui: &mut Ui, _response: &Response, projector: &Projector) {
-        if let Some((_item, _name, geometry)) = self.selected {
+        if let Some((_, _, geometry, cells)) = self.selected {
             let displayed_rect = extract_displayed_rect(ui, projector);
             let painter = ui.painter();
             draw_geometry_on_map(projector, displayed_rect, painter, &geometry);
+
+            // Get the cells containing this document from the runner's all_db_cells
+            for cell in cells.iter() {
+                let solvent = geom::SolventBuilder::new().build();
+                let cell_polygon = solvent.dissolve(Some(*cell)).unwrap();
+                let cell_polygon = &cell_polygon.0[0];
+
+                    if cell_polygon.intersects(&displayed_rect) {
+                    display_cell(projector, painter, *cell, Color32::DARK_GREEN);
+                }
+            }
         }
     }
 }
