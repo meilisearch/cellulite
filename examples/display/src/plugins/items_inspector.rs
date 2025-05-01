@@ -1,5 +1,5 @@
 use cellulite::roaring::RoaringBitmapCodec;
-use egui::{Response, RichText, Sense, Ui, Color32};
+use egui::{Response, RichText, Ui, Color32};
 use fst::{
     automaton::{Levenshtein, Str},
     Automaton, IntoStreamer, Streamer,
@@ -152,18 +152,16 @@ fn display_geojson_as_codeblock(ui: &mut Ui, geometry: &geojson::Value) {
         .code_editor()
         .desired_width(f32::INFINITY)
         .layouter(&mut layouter)
-        .interactive(false);
+        .interactive(true);
 
-    let code_response = ui.add(text_edit).interact(Sense::click());
-    if code_response.clicked() {
-        ui.ctx().open_url(egui::output::OpenUrl {
-            url: geojson_url,
-            new_tab: true,
-        });
-    }
-    if code_response.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
+    ui.add(text_edit);
+    
+    ui.horizontal(|ui| {
+        if ui.button("Copy GeoJSON").clicked() {
+            ui.ctx().copy_text(pretty_geometry.clone());
+        }
+        ui.hyperlink_to("View on geojson.io", geojson_url);
+    });
 }
 
 impl Plugin for ItemsInspector {
