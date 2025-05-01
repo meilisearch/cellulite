@@ -78,10 +78,12 @@ impl App {
     }
 
     pub fn side_panel(&mut self, ui: &mut Ui) {
-        self.debug(ui);
-        self.insert_into_database.ui(ui);
-        self.polygon_filtering.ui(ui);
-        self.items_inspector.ui(ui);
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            self.debug(ui);
+            self.insert_into_database.ui(ui);
+            self.polygon_filtering.ui(ui);
+            self.items_inspector.ui(ui);
+        });
     }
 
     fn debug(&mut self, ui: &mut Ui) {
