@@ -96,7 +96,7 @@ impl ItemsInspector {
                         format!("{}: {}", name, item),
                     );
                     if response.clicked() {
-                        let geometry = self.runner.all_items.lock()[item as usize].clone();
+                        let geometry = self.runner.all_items.lock()[&item].clone();
                            // Get the cells containing this document from the runner's all_db_cells
                         let cells = self.runner.all_db_cells.lock().iter().filter(|(_, bitmap)| bitmap.contains(item)).map(|(cell, _)| *cell).collect();
                         self.selected = Some((item, name, geometry, cells));

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -37,7 +37,7 @@ pub struct Runner {
 
     // Current state of the DB
     last_id: Arc<AtomicU32>,
-    pub all_items: Arc<Mutex<Vec<geojson::Value>>>,
+    pub all_items: Arc<Mutex<HashMap<u32, geojson::Value>>>,
     pub all_db_cells: Arc<Mutex<Vec<(CellIndex, RoaringBitmap)>>>,
     pub fst: Arc<Mutex<fst::Map<Vec<u8>>>>,
 }
@@ -72,7 +72,6 @@ impl Runner {
 
     pub fn add_shape(&self, name: String, value: geojson::Value) {
         // We still need to update all_items for visualization purposes
-        self.all_items.lock().push(value.clone());
         self.to_insert.lock().push((name, value));
         self.wake_up.signal();
     }
@@ -169,14 +168,14 @@ impl Runner {
             // 3. Retrieve all the DB cells
             let rtxn = self.env.read_txn().unwrap();
             let mut last_id = 0;
-            let mut all_points = Vec::new();
+            let mut all_points = HashMap::new();
             for entry in self.db.items(&rtxn).unwrap() {
                 let (id, geometry) = entry.unwrap();
                 last_id = last_id.max(id);
                 match geometry {
-                    GeoJson::Geometry(geometry) => all_points.push(geometry.value),
+                    GeoJson::Geometry(geometry) => all_points.insert(id, geometry.value),
                     _ => todo!(),
-                }
+                };
             }
             *self.all_items.lock() = all_points;
             self.last_id.store(last_id, Ordering::Relaxed);
@@ -220,6 +219,7 @@ impl Runner {
                             fst_builder.entry(name).or_default().insert(id);
                         }
                     }
+                    self.all_items.lock().insert(id, shape.clone());
                     self.db
                         .add_item(
                             &mut wtxn,

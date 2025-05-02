@@ -86,11 +86,9 @@ impl Plugin for DisplayDbContent {
 
             for (cell, bitmap) in self.runner.all_db_cells.lock().iter() {
                 if (min..max).contains(&(cell.resolution() as usize)) {
-                    let boundary = cell.boundary();
-                    let polygon = geo::Polygon::new(
-                        geo::LineString::from_iter(boundary.iter().map(|v| (v.lng(), v.lat()))),
-                        vec![],
-                    );
+                    let solvent = h3o::geom::SolventBuilder::new().build();
+                    let cell_polygon = solvent.dissolve(Some(*cell)).unwrap();
+                    let polygon = &cell_polygon.0[0];
 
                     if polygon.intersects(&displayed_rect) {
                         display_cell(
@@ -108,7 +106,7 @@ impl Plugin for DisplayDbContent {
         }
 
         if self.display_items.load(Ordering::Relaxed) {
-            for value in self.runner.all_items.lock().iter() {
+            for value in self.runner.all_items.lock().values() {
                 draw_geometry_on_map(projector, displayed_rect, painter, value)
             }
         }
