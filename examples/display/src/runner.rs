@@ -178,7 +178,7 @@ impl Runner {
                 };
             }
             *self.all_items.lock() = all_points;
-            self.last_id.store(last_id, Ordering::Relaxed);
+            self.last_id.store(last_id + 1, Ordering::Relaxed);
             let mut all_db_cells = Vec::new();
             for entry in self.db.inner_db_cells(&rtxn).unwrap() {
                 let (cell, bitmap) = entry.unwrap();
