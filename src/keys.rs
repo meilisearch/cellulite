@@ -22,10 +22,11 @@ impl<'a> heed::BytesEncode<'a> for KeyCodec {
                 let output: u64 = (*cell).into();
                 ret.extend_from_slice(&output.to_be_bytes());
             }
-            Key::Shape(item) => {
-                ret = Vec::with_capacity(size_of::<KeyVariant>() + size_of_val(item));
-                ret.push(KeyVariant::Shape as u8);
-                ret.extend_from_slice(&item.to_be_bytes());
+            Key::InnerShape(cell) => {
+                ret = Vec::with_capacity(size_of::<KeyVariant>() + size_of_val(cell));
+                ret.push(KeyVariant::InnerShape as u8);
+                let output: u64 = (*cell).into();
+                ret.extend_from_slice(&output.to_be_bytes());
             }
         }
         Ok(ret.into())
@@ -47,9 +48,9 @@ impl heed::BytesDecode<'_> for KeyCodec {
                 let cell = BigEndian::read_u64(bytes);
                 Key::Cell(cell.try_into()?)
             }
-            v if v == KeyVariant::Shape as u8 => {
-                let item = BigEndian::read_u32(bytes);
-                Key::Shape(item)
+            v if v == KeyVariant::InnerShape as u8 => {
+                let cell = BigEndian::read_u64(bytes);
+                Key::InnerShape(cell.try_into()?)
             }
             _ => unreachable!(),
         };
@@ -61,7 +62,7 @@ impl heed::BytesDecode<'_> for KeyCodec {
 pub enum Key {
     Item(ItemId),
     Cell(CellIndex),
-    Shape(ItemId),
+    InnerShape(CellIndex),
 }
 
 #[repr(u8)]
@@ -69,7 +70,7 @@ pub enum Key {
 pub enum KeyVariant {
     Item = 0,
     Cell = 1,
-    Shape = 2,
+    InnerShape = 2,
 }
 
 pub struct KeyPrefixVariantCodec;

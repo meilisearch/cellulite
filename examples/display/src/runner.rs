@@ -39,6 +39,7 @@ pub struct Runner {
     last_id: Arc<AtomicU32>,
     pub all_items: Arc<Mutex<HashMap<u32, geojson::Value>>>,
     pub all_db_cells: Arc<Mutex<Vec<(CellIndex, RoaringBitmap)>>>,
+    pub inner_shape_cell_db: Arc<Mutex<Vec<(CellIndex, RoaringBitmap)>>>,
     pub fst: Arc<Mutex<fst::Map<Vec<u8>>>>,
 }
 
@@ -60,6 +61,7 @@ impl Runner {
             last_id: Arc::default(),
             all_items: Arc::default(),
             all_db_cells: Arc::default(),
+            inner_shape_cell_db: Arc::default(),
             polygon_filter: Arc::default(),
             stats: Arc::default(),
             filter_stats: Arc::default(),
@@ -185,6 +187,20 @@ impl Runner {
                 all_db_cells.push((cell, bitmap));
             }
             *self.all_db_cells.lock() = all_db_cells;
+
+            let mut inner_shape_db_cells = Vec::new();
+            let mut inner_shape_db_cells_count = 0;
+            for entry in self.db.inner_shape_cells(&rtxn).unwrap() {
+                inner_shape_db_cells_count += 1;
+                let (cell, bitmap) = entry.unwrap();
+                inner_shape_db_cells.push((cell, bitmap));
+            }
+            println!(
+                "inner_shape_db_cells_count: {:?}",
+                inner_shape_db_cells_count
+            );
+            *self.inner_shape_cell_db.lock() = inner_shape_db_cells;
+
             if let Some(fst) = self.metadata.get(&rtxn, "fst").unwrap() {
                 if fst.len() > 0 {
                     *self.fst.lock() = Map::new(fst.to_vec()).unwrap();
@@ -244,6 +260,13 @@ impl Runner {
                         all_db_cells.push((cell, bitmap));
                     }
                     *self.all_db_cells.lock() = all_db_cells;
+
+                    let mut inner_shape_db_cells = Vec::new();
+                    for entry in self.db.inner_shape_cells(&wtxn).unwrap() {
+                        let (cell, bitmap) = entry.unwrap();
+                        inner_shape_db_cells.push((cell, bitmap));
+                    }
+                    *self.inner_shape_cell_db.lock() = inner_shape_db_cells;
 
                     *self.stats.lock() = self.db.stats(&wtxn).unwrap();
                 }
