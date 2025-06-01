@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use ::roaring::RoaringBitmap;
-use geo::{BooleanOps, Contains, Coord, Geometry, Intersects};
-use geo_types::{MultiPolygon, Polygon};
+use geo::{BooleanOps, Contains, Coord, Geometry, HasDimensions, Intersects};
+use geo_types::Polygon;
 use geojson::GeoJson;
 use h3o::{
     error::{InvalidGeometry, InvalidLatLng},
@@ -64,6 +64,26 @@ impl Writer {
             }))
     }
 
+    /// Return all the cells used internally in the database
+    pub fn inner_shape_cells<'a>(
+        &self,
+        rtxn: &'a RoTxn,
+    ) -> Result<impl Iterator<Item = Result<(CellIndex, RoaringBitmap), heed::Error>> + 'a> {
+        Ok(self
+            .db
+            .remap_key_type::<KeyPrefixVariantCodec>()
+            .prefix_iter(rtxn, &KeyVariant::InnerShape)?
+            .remap_types::<KeyCodec, RoaringBitmapCodec>()
+            .map(|res| {
+                res.map(|(key, bitmap)| {
+                    let Key::InnerShape(cell) = key else {
+                        unreachable!()
+                    };
+                    (cell, bitmap)
+                })
+            }))
+    }
+
     /// Return the coordinates of the items rounded down to 50cm if this id exists in the DB. Returns `None` otherwise.
     pub fn item(&self, rtxn: &RoTxn, item: ItemId) -> Result<Option<GeoJson>> {
         self.item_db()
@@ -92,23 +112,159 @@ impl Writer {
     pub fn add_item(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
         let shape = Geometry::try_from(geo.clone()).unwrap();
         self.item_db().put(wtxn, &Key::Item(item), geo)?;
+        let to_insert = self.explode_level_zero_geo(wtxn, item, shape)?;
+        let mut to_insert = VecDeque::from(to_insert);
 
+        while let Some((current_item, shape, cell)) = to_insert.pop_front() {
+            let cell_polygon = h3o::geom::SolventBuilder::new()
+                .build()
+                .dissolve(Some(cell))
+                .unwrap();
+            let cell_polygon = &cell_polygon.0[0];
+
+            // If the cell is entirely contained within the shape, insert it in the inner_shape_cell_db and stop
+            if shape.contains(cell_polygon) {
+                let mut bitmap = self
+                    .inner_shape_cell_db()
+                    .get(wtxn, &Key::InnerShape(cell))?
+                    .unwrap_or_default();
+                bitmap.insert(current_item);
+                self.inner_shape_cell_db()
+                    .put(wtxn, &Key::InnerShape(cell), &bitmap)?;
+            } else {
+                // Otherwise, insert it in the cell_db
+                let mut bitmap = self
+                    .cell_db()
+                    .get(wtxn, &Key::Cell(cell))?
+                    .unwrap_or_default();
+                let already_splitted = bitmap.len() >= self.threshold;
+                bitmap.insert(current_item);
+                self.cell_db().put(wtxn, &Key::Cell(cell), &bitmap)?;
+                // If we reached the max resolution, there is nothing else we can do
+                let Some(next_res) = cell.resolution().succ() else {
+                    continue;
+                };
+                // If we exceeded the threshold, we should re-insert ourselves in the queue with a greater resolution
+                if bitmap.len() >= self.threshold {
+                    // insert ourselves in the queue with a greater resolution
+                    match shape {
+                        Geometry::Point(point) => {
+                            let cell = LatLng::new(point.y(), point.x()).unwrap().to_cell(next_res);
+                            to_insert.push_back((current_item, shape, cell));
+                        }
+                        Geometry::Polygon(polygon) => {
+                            let mut tiler = TilerBuilder::new(next_res)
+                                .containment_mode(ContainmentMode::Covers)
+                                .build();
+                            tiler.add(polygon.clone())?;
+                            for cell in tiler.into_coverage() {
+                                to_insert.push_back((
+                                    current_item,
+                                    Geometry::Polygon(polygon.clone()),
+                                    cell,
+                                ));
+                            }
+                        }
+                        Geometry::MultiPoint(_)
+                        | Geometry::MultiPolygon(_)
+                        | Geometry::Rect(_)
+                        | Geometry::Triangle(_) => {
+                            todo!("Received a shape that should have been exploded already")
+                        }
+                        _ => {
+                            unreachable!()
+                        }
+                    }
+
+                    if !already_splitted {
+                        // Loop over all the items of the bitmap and insert the part that fall in the shape in the queue
+                        for item in bitmap.iter() {
+                            // already inserted above
+                            if current_item == item {
+                                continue;
+                            }
+                            let geojson = self.item_db().get(wtxn, &Key::Item(item))?.unwrap();
+                            let shape = Geometry::try_from(geojson).unwrap();
+                            match shape {
+                                Geometry::Point(point) => {
+                                    let cell = LatLng::new(point.y(), point.x())
+                                        .unwrap()
+                                        .to_cell(next_res);
+                                    to_insert.push_back((item, shape, cell));
+                                }
+                                Geometry::MultiPoint(multi_point) => {
+                                    for point in multi_point.0.iter() {
+                                        if cell_polygon.contains(&Coord {
+                                            x: point.x(),
+                                            y: point.y(),
+                                        }) {
+                                            let cell = LatLng::new(point.y(), point.x())
+                                                .unwrap()
+                                                .to_cell(next_res);
+                                            to_insert.push_back((
+                                                item,
+                                                Geometry::Point(*point),
+                                                cell,
+                                            ));
+                                        }
+                                    }
+                                }
+                                Geometry::Polygon(polygon) => {
+                                    let mut tiler = TilerBuilder::new(next_res)
+                                        .containment_mode(ContainmentMode::Covers)
+                                        .build();
+                                    let intersection = polygon.intersection(cell_polygon);
+                                    if intersection.is_empty() {
+                                        continue;
+                                    }
+                                    for polygon in intersection.0 {
+                                        tiler.add(polygon.clone())?;
+                                    }
+                                    for cell in tiler.into_coverage() {
+                                        to_insert.push_back((
+                                            item,
+                                            Geometry::Polygon(polygon.clone()),
+                                            cell,
+                                        ));
+                                    }
+                                }
+                                _ => todo!(),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn explode_level_zero_geo(
+        &self,
+        wtxn: &mut RwTxn,
+        item: ItemId,
+        shape: Geometry,
+    ) -> Result<Vec<(ItemId, Geometry, CellIndex)>, Error> {
         match shape {
             Geometry::Point(point) => {
                 let cell = LatLng::new(point.y(), point.x())
                     .unwrap()
                     .to_cell(Resolution::Zero);
-                self.insert_shape_in_cell(wtxn, item, shape, cell)
+                Ok(vec![(item, shape, cell)])
             }
-            Geometry::MultiPoint(multi_point) => {
-                for point in multi_point {
-                    let cell = LatLng::new(point.y(), point.x())
-                        .unwrap()
-                        .to_cell(Resolution::Zero);
-                    self.insert_shape_in_cell(wtxn, item, point.into(), cell)?;
-                }
-                Ok(())
-            }
+            Geometry::MultiPoint(multi_point) => Ok(multi_point
+                .0
+                .iter()
+                .map(|point| {
+                    (
+                        item,
+                        Geometry::Point(point.clone()),
+                        LatLng::new(point.y(), point.x())
+                            .unwrap()
+                            .to_cell(Resolution::Zero),
+                    )
+                })
+                .collect()),
 
             Geometry::Polygon(polygon) => {
                 let mut tiler = TilerBuilder::new(Resolution::Zero)
@@ -116,15 +272,26 @@ impl Writer {
                     .build();
                 tiler.add(polygon.clone())?;
 
+                let mut to_insert = Vec::new();
                 for cell in tiler.into_coverage() {
-                    self.insert_shape_in_cell(
-                        wtxn,
-                        item,
-                        Geometry::Polygon(polygon.clone()),
-                        cell,
-                    )?;
+                    // If the cell is entirely contained in the polygon, insert directly to inner_shape_cell_db
+                    let solvent = h3o::geom::SolventBuilder::new().build();
+                    let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
+                    let cell_polygon = &cell_polygon.0[0];
+                    if polygon.contains(cell_polygon) {
+                        let mut bitmap = self
+                            .inner_shape_cell_db()
+                            .get(wtxn, &Key::InnerShape(cell))?
+                            .unwrap_or_default();
+                        bitmap.insert(item);
+                        self.inner_shape_cell_db()
+                            .put(wtxn, &Key::InnerShape(cell), &bitmap)?;
+                    } else {
+                        // Otherwise use insert_shape_in_cell for partial overlaps
+                        to_insert.push((item, Geometry::Polygon(polygon.clone()), cell));
+                    }
                 }
-                Ok(())
+                Ok(to_insert)
             }
             Geometry::MultiPolygon(_multi_polygon) => todo!(),
             Geometry::Rect(_rect) => todo!(),
@@ -164,95 +331,8 @@ impl Writer {
         self.db.remap_data_type()
     }
 
-    fn insert_shape_in_cell(
-        &self,
-        wtxn: &mut RwTxn,
-        item: ItemId,
-        shape: Geometry,
-        cell: CellIndex,
-    ) -> Result<()> {
-        let key = Key::Cell(cell);
-        match self.cell_db().get(wtxn, &key)? {
-            Some(mut bitmap) => {
-                let already_splitted = bitmap.len() >= self.threshold;
-                bitmap.insert(item);
-                self.cell_db().put(wtxn, &key, &bitmap)?;
-
-                if bitmap.len() >= self.threshold {
-                    let to_insert = if already_splitted {
-                        RoaringBitmap::from_sorted_iter(Some(item)).unwrap()
-                    } else {
-                        bitmap
-                    };
-                    for i in to_insert {
-                        let geometry = if i == item {
-                            shape.clone()
-                        } else {
-                            self.item_db()
-                                .get(wtxn, &Key::Item(i))?
-                                .unwrap()
-                                .try_into()
-                                .unwrap()
-                        };
-                        match geometry {
-                            Geometry::Point(point) => {
-                                let latlng = LatLng::new(point.y(), point.x()).unwrap();
-                                let Some(res) = cell.resolution().succ() else {
-                                    continue;
-                                };
-                                self.insert_shape_in_cell(wtxn, i, geometry, latlng.to_cell(res))?;
-                            }
-                            Geometry::MultiPoint(_multi_point) => todo!(),
-                            Geometry::Polygon(polygon) => {
-                                let solvent = h3o::geom::SolventBuilder::new().build();
-                                let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
-                                let cell_polygon = &cell_polygon.0[0];
-
-                                // Find the intersection between the polygon and the cell
-                                let intersection: MultiPolygon = polygon.intersection(cell_polygon);
-                                if !intersection.0.is_empty() {
-                                    let Some(next_res) = cell.resolution().succ() else {
-                                        continue;
-                                    };
-
-                                    let mut tiler = TilerBuilder::new(next_res)
-                                        .containment_mode(ContainmentMode::Covers)
-                                        .build();
-
-                                    let intersection_clone = intersection.clone();
-                                    for polygon in intersection.0 {
-                                        tiler.add(polygon)?;
-                                    }
-
-                                    for cell in tiler.into_coverage() {
-                                        self.insert_shape_in_cell(
-                                            wtxn,
-                                            i,
-                                            Geometry::Polygon(intersection_clone.0[0].clone()),
-                                            cell,
-                                        )?;
-                                    }
-                                }
-                            }
-                            Geometry::MultiPolygon(_multi_polygon) => todo!(),
-                            Geometry::Rect(_rect) => todo!(),
-                            Geometry::Triangle(_triangle) => todo!(),
-
-                            Geometry::GeometryCollection(_geometry_collection) => todo!(),
-
-                            Geometry::Line(_)
-                            | Geometry::LineString(_)
-                            | Geometry::MultiLineString(_) => unreachable!(),
-                        }
-                    }
-                }
-            }
-            None => {
-                let bitmap = RoaringBitmap::from_sorted_iter(Some(item)).unwrap();
-                self.cell_db().put(wtxn, &key, &bitmap)?;
-            }
-        }
-        Ok(())
+    fn inner_shape_cell_db(&self) -> heed::Database<KeyCodec, RoaringBitmapCodec> {
+        self.db.remap_data_type()
     }
 
     // The strategy to retrieve the points in a shape is to:
