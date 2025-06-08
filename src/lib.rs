@@ -228,7 +228,28 @@ impl Writer {
                                         ));
                                     }
                                 }
-                                _ => todo!(),
+                                Geometry::MultiPolygon(multi_polygon) => {
+                                    for polygon in multi_polygon.0.iter() {
+                                        let mut tiler = TilerBuilder::new(next_res)
+                                        .containment_mode(ContainmentMode::Covers)
+                                        .build();
+                                        let intersection = polygon.intersection(cell_polygon);
+                                        if intersection.is_empty() {
+                                            continue;
+                                        }
+                                        for polygon in intersection.0 {
+                                            tiler.add(polygon.clone())?;
+                                        }
+                                        for cell in tiler.into_coverage() {
+                                            to_insert.push_back((
+                                                item,
+                                                Geometry::Polygon(polygon.clone()),
+                                                cell,
+                                            ));
+                                        }
+                                    }
+                                }
+                                other => todo!("other {:?}", other),
                             }
                         }
                     }
@@ -293,7 +314,13 @@ impl Writer {
                 }
                 Ok(to_insert)
             }
-            Geometry::MultiPolygon(_multi_polygon) => todo!(),
+            Geometry::MultiPolygon(multi_polygon) => {
+                let mut to_insert = Vec::new();
+                for polygon in multi_polygon.0.iter() {
+                    to_insert.extend(self.explode_level_zero_geo(wtxn, item, Geometry::Polygon(polygon.clone()))?);
+                }
+                Ok(to_insert)
+            }
             Geometry::Rect(_rect) => todo!(),
             Geometry::Triangle(_triangle) => todo!(),
 
@@ -439,7 +466,13 @@ impl Writer {
                         ret.insert(item);
                     }
                 }
-                Geometry::MultiPolygon(_multi_polygon) => todo!(),
+                Geometry::MultiPolygon(multi_polygon) => {
+                    for poly in multi_polygon.0.iter() {
+                        if polygon.contains(poly) || polygon.intersects(poly) {
+                            ret.insert(item);
+                        }
+                    }
+                }
                 Geometry::Rect(_rect) => todo!(),
                 Geometry::Triangle(_triangle) => todo!(),
 
