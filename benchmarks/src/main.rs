@@ -19,6 +19,7 @@ mod france_arrondissements;
 mod france_communes;
 mod france_departements;
 mod france_regions;
+mod france_zones;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -50,13 +51,18 @@ struct Args {
 
 #[derive(Clone, Copy, PartialEq, Eq, Parser, Debug, ValueEnum)]
 enum Dataset {
+    /// 100_000 points representing shops in France
     Shop,
+    /// 22_000_000 points representing houses and buildings in France
     Cadastre,
     Canton,
     Arrondissement,
     Commune,
     Departement,
+    /// 13 regions in France
     Region,
+    /// Mix of all the canton, arrondissement, commune, departement and region
+    Zone,
 }
 
 fn main() {
@@ -83,6 +89,9 @@ fn main() {
         }
         Dataset::Region => {
             &mut france_regions::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+        }
+        Dataset::Zone => {
+            &mut france_zones::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
         }
     };
 
