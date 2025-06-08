@@ -14,7 +14,11 @@ use tempfile::TempDir;
 mod france_cadastre;
 mod france_query_zones;
 mod france_shops;
-mod france_canton;
+mod france_cantons;
+mod france_arrondissements;
+mod france_communes;
+mod france_departements;
+mod france_regions;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -49,6 +53,10 @@ enum Dataset {
     Shop,
     Cadastre,
     Canton,
+    Arrondissement,
+    Commune,
+    Departement,
+    Region,
 }
 
 fn main() {
@@ -62,7 +70,19 @@ fn main() {
             &mut france_cadastre::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
         }
         Dataset::Canton => {
-            &mut france_canton::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+            &mut france_cantons::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+        }
+        Dataset::Arrondissement => {
+            &mut france_arrondissements::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+        }
+        Dataset::Commune => {
+            &mut france_communes::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+        }
+        Dataset::Departement => {
+            &mut france_departements::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+        }
+        Dataset::Region => {
+            &mut france_regions::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
         }
     };
 

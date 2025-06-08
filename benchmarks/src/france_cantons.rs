@@ -1,8 +1,7 @@
-// Importer for https://www.data.gouv.fr/fr/datasets/adresses-extraites-du-cadastre/#/resources
+// Importer for https://github.com/gregoiredavid/france-geojson
 
 use std::{fs, io::BufReader};
 
-use flate2::bufread::GzDecoder;
 use geojson::{GeoJson, de::deserialize_feature_collection_to_vec};
 
 pub fn parse() -> impl Iterator<Item = (String, GeoJson)> {
@@ -12,8 +11,8 @@ pub fn parse() -> impl Iterator<Item = (String, GeoJson)> {
         input.into_iter().map(|value| {
             (
                 format!(
-                    "{}, {}",
-                    dbg!(&value)["nom"].as_str().unwrap().to_lowercase(),
+                    "{}, {} - canton",
+                    value["nom"].as_str().unwrap().to_lowercase(),
                     value["code"].as_str().unwrap()
                 ),
             GeoJson::from_json_value(value["geometry"].clone()).unwrap(),
