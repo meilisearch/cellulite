@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
 use cellulite::{Database, Writer, roaring::RoaringBitmapCodec};
 use clap::{Parser, ValueEnum};
-use france_regions::{gard, le_vigan, nimes, occitanie};
+use france_query_zones::{gard, le_vigan, nimes, occitanie};
 use geojson::GeoJson;
 use heed::{
     EnvOpenOptions,
@@ -12,8 +12,9 @@ use roaring::RoaringBitmap;
 use tempfile::TempDir;
 
 mod france_cadastre;
-mod france_regions;
+mod france_query_zones;
 mod france_shops;
+mod france_canton;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -47,6 +48,7 @@ struct Args {
 enum Dataset {
     Shop,
     Cadastre,
+    Canton,
 }
 
 fn main() {
@@ -58,6 +60,9 @@ fn main() {
         Dataset::Shop => &mut france_shops::parse() as &mut dyn Iterator<Item = (String, GeoJson)>,
         Dataset::Cadastre => {
             &mut france_cadastre::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+        }
+        Dataset::Canton => {
+            &mut france_canton::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
         }
     };
 
