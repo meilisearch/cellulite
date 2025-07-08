@@ -45,7 +45,8 @@ pub struct Runner {
 
 pub struct FilterStats {
     pub nb_points_matched: usize,
-    pub processed_in: Duration,
+    pub processed_in_cold: Duration,
+    pub processed_in_hot: Duration,
     pub shape_contains_n_points: usize,
     pub cell_explored: Vec<(FilteringStep, CellIndex)>,
 }
@@ -283,10 +284,23 @@ impl Runner {
                         .db
                         .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
                         .unwrap();
+                    let cold = now.elapsed();
+                    self.db
+                    .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
+                    .unwrap();
+                    self.db
+                    .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
+                    .unwrap();
+                    let now = std::time::Instant::now();
+                    self.db
+                        .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
+                        .unwrap();
+                    let hot = now.elapsed();
 
                     *self.filter_stats.lock() = Some(FilterStats {
                         nb_points_matched: matched.len() as usize,
-                        processed_in: now.elapsed(),
+                        processed_in_cold: cold,
+                        processed_in_hot: hot,
                         shape_contains_n_points,
                         cell_explored: steps,
                     });

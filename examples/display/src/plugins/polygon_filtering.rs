@@ -84,7 +84,8 @@ impl PolygonFiltering {
                     "Polygon contains {} points",
                     stats.shape_contains_n_points
                 ));
-                ui.label(format!("Processed in {:?}", stats.processed_in));
+                ui.label(format!("[COLD] Processed in {:?}", stats.processed_in_cold));
+                ui.label(format!("[HOT] Processed in {:?}", stats.processed_in_hot));
                 let mut display_filtering_details =
                     self.display_filtering_details.load(Ordering::Acquire);
                 ui.add(
