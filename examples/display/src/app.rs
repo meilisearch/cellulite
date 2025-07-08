@@ -45,7 +45,7 @@ impl App {
 
         let env = unsafe {
             EnvOpenOptions::new()
-                .map_size(200 * 1024 * 1024)
+                .map_size(200 * 1024 * 1024 * 1024)
                 .max_dbs(2)
                 .open(path)
         }
