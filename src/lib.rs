@@ -231,8 +231,8 @@ impl Writer {
                                 Geometry::MultiPolygon(multi_polygon) => {
                                     for polygon in multi_polygon.0.iter() {
                                         let mut tiler = TilerBuilder::new(next_res)
-                                        .containment_mode(ContainmentMode::Covers)
-                                        .build();
+                                            .containment_mode(ContainmentMode::Covers)
+                                            .build();
                                         let intersection = polygon.intersection(cell_polygon);
                                         if intersection.is_empty() {
                                             continue;
@@ -317,7 +317,11 @@ impl Writer {
             Geometry::MultiPolygon(multi_polygon) => {
                 let mut to_insert = Vec::new();
                 for polygon in multi_polygon.0.iter() {
-                    to_insert.extend(self.explode_level_zero_geo(wtxn, item, Geometry::Polygon(polygon.clone()))?);
+                    to_insert.extend(self.explode_level_zero_geo(
+                        wtxn,
+                        item,
+                        Geometry::Polygon(polygon.clone()),
+                    )?);
                 }
                 Ok(to_insert)
             }

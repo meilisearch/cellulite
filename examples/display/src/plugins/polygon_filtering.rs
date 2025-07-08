@@ -196,6 +196,20 @@ impl Plugin for PolygonFiltering {
                             painter.line(points, PathStroke::new(4.0, Color32::DARK_GREEN));
                         }
                     }
+                    geojson::Value::MultiPolygon(coords) => {
+                        for polygon in coords {
+                            let points: Vec<_> = polygon
+                                .iter()
+                                .flat_map(|exterior| {
+                                    exterior.iter().map(|coord| {
+                                        let pos = projector.project(Position::new(coord[0], coord[1]));
+                                        pos.to_pos2()
+                                    })
+                                })
+                                .collect();
+                            painter.line(points, PathStroke::new(4.0, Color32::DARK_GREEN));
+                        }
+                    }
                     _ => todo!(),
                 }
             }
