@@ -35,13 +35,13 @@ pub enum Error {
 type Result<O, E = Error> = std::result::Result<O, E>;
 
 #[derive(Clone)]
-pub struct Writer {
+pub struct Cellulite {
     pub(crate) db: Database,
     /// After how many elements should we break a cell into sub-cells
     pub threshold: u64,
 }
 
-impl Writer {
+impl Cellulite {
     pub fn new(db: Database) -> Self {
         Self { db, threshold: 200 }
     }
@@ -109,7 +109,7 @@ impl Writer {
             }))
     }
 
-    pub fn add_item(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
+    pub fn add(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
         let shape = Geometry::try_from(geo.clone()).unwrap();
         self.item_db().put(wtxn, &Key::Item(item), geo)?;
         let to_insert = self.explode_level_zero_geo(wtxn, item, shape)?;

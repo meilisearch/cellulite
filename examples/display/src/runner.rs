@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use cellulite::{roaring::RoaringBitmapCodec, FilteringStep, Stats, Writer};
+use cellulite::{roaring::RoaringBitmapCodec, FilteringStep, Stats, Cellulite};
 use egui::mutex::Mutex;
 use fst::{IntoStreamer, Map, MapBuilder, Streamer};
 use geo_types::{Coord, LineString, Polygon};
@@ -22,7 +22,7 @@ use roaring::RoaringBitmap;
 #[derive(Clone)]
 pub struct Runner {
     pub env: Env,
-    pub db: Writer,
+    pub db: Cellulite,
     pub metadata: Database<Str, Bytes>,
     pub wake_up: Arc<synchronoise::SignalEvent>,
 
@@ -52,7 +52,7 @@ pub struct FilterStats {
 }
 
 impl Runner {
-    pub fn new(env: Env, db: Writer, metadata: Database<Str, Bytes>) -> Self {
+    pub fn new(env: Env, db: Cellulite, metadata: Database<Str, Bytes>) -> Self {
         let this = Self {
             env,
             db,
@@ -238,7 +238,7 @@ impl Runner {
                     }
                     self.all_items.lock().insert(id, shape.clone());
                     self.db
-                        .add_item(
+                        .add(
                             &mut wtxn,
                             id,
                             &GeoJson::Geometry(geojson::Geometry {
