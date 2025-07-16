@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 use crate::{
     roaring::RoaringBitmapCodec, Database, ItemId, Key, KeyCodec, KeyPrefixVariantCodec,
-    KeyVariant, Writer,
+    KeyVariant, Cellulite,
 };
 
 pub struct DatabaseHandle {
@@ -100,12 +100,12 @@ impl fmt::Display for NnRes {
 fn basic_write() {
     let handle = create_database();
     let mut wtxn = handle.env.write_txn().unwrap();
-    let mut writer = Writer::new(handle.database);
+    let mut writer = Cellulite::new(handle.database);
     writer.threshold = 3;
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 0.0,
     ])));
-    writer.add_item(&mut wtxn, 0, &point).unwrap();
+    writer.add(&mut wtxn, 0, &point).unwrap();
 
     insta::assert_snapshot!(handle.snap(&wtxn), @r###"
         # Items
@@ -117,11 +117,11 @@ fn basic_write() {
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 1.0,
     ])));
-    writer.add_item(&mut wtxn, 1, &point).unwrap();
+    writer.add(&mut wtxn, 1, &point).unwrap();
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 2.0,
     ])));
-    writer.add_item(&mut wtxn, 2, &point).unwrap();
+    writer.add(&mut wtxn, 2, &point).unwrap();
 
     insta::assert_snapshot!(handle.snap(&wtxn), @r"
     # Items
@@ -138,7 +138,7 @@ fn basic_write() {
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 3.0,
     ])));
-    writer.add_item(&mut wtxn, 3, &point).unwrap();
+    writer.add(&mut wtxn, 3, &point).unwrap();
 
     insta::assert_snapshot!(handle.snap(&wtxn), @r"
     # Items
