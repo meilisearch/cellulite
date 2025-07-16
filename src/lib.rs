@@ -522,7 +522,7 @@ impl Cellulite {
         for &cell in children_cells.iter() {
             let cell_shape = get_cell_shape(cell);
             for (item, shape) in items.iter() {
-                match intersect_shape_with_cell_shape(&shape, &cell_shape) {
+                match shape_relation_with_cell(&shape, &cell_shape) {
                     RelationToCell::ContainsCell => {
                         let entry = to_insert_in_belly
                             .entry(cell)
@@ -540,6 +540,7 @@ impl Cellulite {
                 }
             }
         }
+
         // 3.
         for (cell, items) in to_insert_in_belly {
             let mut bitmap = self
@@ -569,7 +570,7 @@ impl Cellulite {
                 for item_id in original_bitmap.iter() {
                     let item = self.item_db().get(wtxn, &Key::Item(item_id))?.unwrap();
                     let item = Geometry::try_from(item).unwrap();
-                    match intersect_shape_with_cell_shape(&item, &cell_shape) {
+                    match shape_relation_with_cell(&item, &cell_shape) {
                         RelationToCell::ContainsCell => {
                             belly_items.insert(item_id);
                         }
@@ -783,11 +784,11 @@ enum RelationToCell {
 
 /// Compute the relation between a shape and a cell shape.
 /// It modifies the shape on the fly to keep the part that fits within the cell.
-fn intersect_shape_with_cell_shape(shape: &Geometry, cell_shape: &MultiPolygon) -> RelationToCell {
+fn shape_relation_with_cell(shape: &Geometry, cell_shape: &MultiPolygon) -> RelationToCell {
     match shape {
         Geometry::Point(point) => {
             if cell_shape.contains(point) {
-                RelationToCell::ContainsCell
+                RelationToCell::IntersectsCell(Geometry::Point(*point))
             } else {
                 RelationToCell::NoRelation
             }
@@ -835,10 +836,10 @@ fn intersect_shape_with_cell_shape(shape: &Geometry, cell_shape: &MultiPolygon) 
             }
         }
         Geometry::Rect(rect) => {
-            intersect_shape_with_cell_shape(&rect.to_polygon().into(), cell_shape)
+            shape_relation_with_cell(&rect.to_polygon().into(), cell_shape)
         }
         Geometry::Triangle(triangle) => {
-            intersect_shape_with_cell_shape(&triangle.to_polygon().into(), cell_shape)
+            shape_relation_with_cell(&triangle.to_polygon().into(), cell_shape)
         }
         Geometry::GeometryCollection(_geometry_collection) => todo!(),
         Geometry::Line(_) | Geometry::LineString(_) | Geometry::MultiLineString(_) => {
