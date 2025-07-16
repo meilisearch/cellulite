@@ -249,6 +249,7 @@ impl Runner {
                         )
                         .unwrap();
                 }
+                self.db.build(&mut wtxn).unwrap();
 
                 // We must recompute the fst, stats and db cells
                 if !to_insert.is_empty() {
