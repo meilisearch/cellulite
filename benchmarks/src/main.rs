@@ -126,25 +126,36 @@ fn main() {
         println!("Inserting points");
         let time = std::time::Instant::now();
         let mut cpt = 0;
+        let mut prev_cpt = 0;
         let writer = Cellulite::new(database);
         let mut wtxn = env.write_txn().unwrap();
 
         let mut print_timer = time;
         for (name, geometry) in input {
             cpt += 1;
-            if print_timer.elapsed() > Duration::from_secs(10) {
+            let elapsed_since_last_print = print_timer.elapsed();
+            if elapsed_since_last_print > Duration::from_secs(10) {
                 let elapsed = time.elapsed();
                 println!(
-                    "Inserted {cpt} points in {elapsed:?}, throughput: {} points / seconds",
+                    "Inserted {prev_cpt} additional points in {elapsed_since_last_print:.2?}, throughput: {} points / seconds || In total: {cpt} points, started {:.2?} ago, throughput: {} points / seconds",
+                    prev_cpt as f32 / elapsed_since_last_print.as_secs_f32(),
+                    time.elapsed(),
                     cpt as f32 / elapsed.as_secs_f32()
                 );
                 print_timer = std::time::Instant::now();
+                prev_cpt = cpt;
             }
             writer.add(&mut wtxn, cpt, &geometry).unwrap();
             if args.index_metadata {
                 metadata_builder.entry(name).or_default().insert(cpt);
             }
         }
+        println!("Inserted {cpt} points in {:.2?}", time.elapsed());
+        println!("Building the index...");
+        let time = std::time::Instant::now();
+        writer.build(&mut wtxn).unwrap();
+        println!("Index built in {:?}", time.elapsed());
+
         // If the metadata should be indexed, we must build an fst containing
         // all the names.
         if args.index_metadata {
