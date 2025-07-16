@@ -1,4 +1,4 @@
-use cellulite::{Database, Writer};
+use cellulite::{Database, Cellulite};
 use egui::{CentralPanel, RichText, Ui};
 use heed::{
     types::{Bytes, Str},
@@ -18,7 +18,7 @@ pub struct App {
     #[allow(dead_code)]
     env: Env,
     #[allow(dead_code)]
-    db: Writer,
+    db: Cellulite,
     #[allow(dead_code)]
     temp_dir: Option<tempfile::TempDir>,
     #[allow(dead_code)]
@@ -55,7 +55,7 @@ impl App {
         let metadata: heed::Database<Str, Bytes> =
             env.create_database(&mut wtxn, Some("metadata")).unwrap();
         wtxn.commit().unwrap();
-        let db = Writer::new(database);
+        let db = Cellulite::new(database);
 
         let runner = Runner::new(env.clone(), db.clone(), metadata.clone());
         let insert_into_database = plugins::InsertIntoDatabase::new(runner.clone());

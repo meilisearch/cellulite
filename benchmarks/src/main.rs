@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use cellulite::{Database, Writer, roaring::RoaringBitmapCodec};
+use cellulite::{Database, Cellulite, roaring::RoaringBitmapCodec};
 use clap::{Parser, ValueEnum};
 use france_query_zones::{gard, le_vigan, nimes, occitanie};
 use geojson::GeoJson;
@@ -128,7 +128,7 @@ fn main() {
         println!("Inserting points");
         let time = std::time::Instant::now();
         let mut cpt = 0;
-        let writer = Writer::new(database);
+        let writer = Cellulite::new(database);
         let mut wtxn = env.write_txn().unwrap();
 
         let mut print_timer = time;
@@ -142,7 +142,7 @@ fn main() {
                 );
                 print_timer = std::time::Instant::now();
             }
-            writer.add_item(&mut wtxn, cpt, &geometry).unwrap();
+            writer.add(&mut wtxn, cpt, &geometry).unwrap();
             if args.index_metadata {
                 metadata_builder.entry(name).or_default().insert(cpt);
             }
@@ -172,7 +172,7 @@ fn main() {
         let repeat = 1000;
 
         let rtxn = env.read_txn().unwrap();
-        let writer = Writer::new(database);
+        let writer = Cellulite::new(database);
         let le_vigan = le_vigan();
         let time = std::time::Instant::now();
         let result = writer.in_shape(&rtxn, &le_vigan, &mut |_| ()).unwrap();
