@@ -203,7 +203,8 @@ impl Plugin for PolygonFiltering {
                                 .iter()
                                 .flat_map(|exterior| {
                                     exterior.iter().map(|coord| {
-                                        let pos = projector.project(Position::new(coord[0], coord[1]));
+                                        let pos =
+                                            projector.project(Position::new(coord[0], coord[1]));
                                         pos.to_pos2()
                                     })
                                 })
