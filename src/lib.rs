@@ -154,12 +154,15 @@ impl Cellulite {
 
     pub fn add(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
         self.validate_geojson(item, geo)?;
+        self.item_db().put(wtxn, &Key::Item(item), geo)?;
         self.updated_db().put(wtxn, &Key::Update(item), &())?;
+        self.deleted_db().delete(wtxn, &Key::Remove(item))?;
         Ok(())
     }
 
     pub fn delete(&self, wtxn: &mut RwTxn, item: ItemId) -> Result<()> {
         self.deleted_db().put(wtxn, &Key::Remove(item), &())?;
+        self.updated_db().delete(wtxn, &Key::Update(item))?;
         Ok(())
     }
 
