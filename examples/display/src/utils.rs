@@ -133,7 +133,7 @@ pub fn draw_geometry_on_map(
         }
         geojson::Value::MultiPolygon(coords) => {
             for polygon in coords {
-                let polygon= geojson::Value::Polygon(polygon.clone());
+                let polygon = geojson::Value::Polygon(polygon.clone());
                 draw_geometry_on_map(projector, displayed_rect, painter, &polygon);
             }
         }

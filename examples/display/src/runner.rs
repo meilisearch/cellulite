@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use cellulite::{roaring::RoaringBitmapCodec, FilteringStep, Stats, Cellulite};
+use cellulite::{roaring::RoaringBitmapCodec, Cellulite, FilteringStep, Stats};
 use egui::mutex::Mutex;
 use fst::{IntoStreamer, Map, MapBuilder, Streamer};
 use geo_types::{Coord, LineString, Polygon};
@@ -286,11 +286,11 @@ impl Runner {
                         .unwrap();
                     let cold = now.elapsed();
                     self.db
-                    .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
-                    .unwrap();
+                        .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
+                        .unwrap();
                     self.db
-                    .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
-                    .unwrap();
+                        .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
+                        .unwrap();
                     let now = std::time::Instant::now();
                     self.db
                         .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
