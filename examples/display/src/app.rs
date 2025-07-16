@@ -1,4 +1,4 @@
-use cellulite::{Database, Cellulite};
+use cellulite::{Cellulite, Database};
 use egui::{CentralPanel, RichText, Ui};
 use heed::{
     types::{Bytes, Str},
@@ -88,7 +88,10 @@ impl App {
 
     fn debug(&mut self, ui: &mut Ui) {
         ui.collapsing(RichText::new("Debug").heading(), |ui| {
-            ui.label(format!("Total number of items: {:?}", self.runner.all_items.lock().len()));
+            ui.label(format!(
+                "Total number of items: {:?}",
+                self.runner.all_items.lock().len()
+            ));
             self.extract_lat_lng.ui(ui);
             if ui.button("Insert 1000 random points").clicked() {
                 self.insert_into_database.insert_random_items(1000);

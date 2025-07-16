@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use cellulite::{Database, Cellulite, roaring::RoaringBitmapCodec};
+use cellulite::{Cellulite, Database, roaring::RoaringBitmapCodec};
 use clap::{Parser, ValueEnum};
 use france_query_zones::{gard, le_vigan, nimes, occitanie};
 use geojson::GeoJson;
@@ -11,14 +11,14 @@ use heed::{
 use roaring::RoaringBitmap;
 use tempfile::TempDir;
 
-mod france_cadastre;
-mod france_query_zones;
-mod france_shops;
-mod france_cantons;
 mod france_arrondissements;
+mod france_cadastre;
+mod france_cantons;
 mod france_communes;
 mod france_departements;
+mod france_query_zones;
 mod france_regions;
+mod france_shops;
 mod france_zones;
 
 #[derive(Parser, Debug)]
@@ -90,9 +90,7 @@ fn main() {
         Dataset::Region => {
             &mut france_regions::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
         }
-        Dataset::Zone => {
-            &mut france_zones::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
-        }
+        Dataset::Zone => &mut france_zones::parse() as &mut dyn Iterator<Item = (String, GeoJson)>,
     };
 
     println!("Deserialized the points in {:?}", time.elapsed());
