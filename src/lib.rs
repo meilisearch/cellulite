@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use ::roaring::RoaringBitmap;
-use geo::{BooleanOps, Contains, Coord, Geometry, HasDimensions, Intersects};
+use geo::{
+    BooleanOps, Contains, Coord, Geometry, HasDimensions, Intersects, MultiPolygon,
+};
 use geo_types::Polygon;
 use geojson::GeoJson;
 use h3o::{
@@ -135,10 +137,10 @@ impl Cellulite {
                 unreachable!()
             };
             // safe because keys are ordered
-            bitmap.push(item);
+            bitmap.try_push(item).unwrap();
             // safe because we own the ItemId
             unsafe {
-                iter.del_current();
+                iter.del_current()?;
             }
         }
         Ok(bitmap)
@@ -156,10 +158,10 @@ impl Cellulite {
                 unreachable!()
             };
             // safe because keys are ordered
-            bitmap.push(item);
+            bitmap.try_push(item).unwrap();
             // safe because we own the ItemId
             unsafe {
-                iter.del_current();
+                iter.del_current()?;
             }
         }
         Ok(bitmap)
@@ -181,13 +183,29 @@ impl Cellulite {
         self.remove_deleted_items(wtxn, removed_items)?;
 
         // 3.
-        self.insert_items_at_level_zero(wtxn, inserted_items)?;
+        self.insert_items_at_level_zero(wtxn, &inserted_items)?;
 
-        // 4.
-        //         let shape = Geometry::try_from(geo.clone()).unwrap();
-        let to_insert = self.explode_level_zero_geo(wtxn, item, shape)?;
-        let mut to_insert = VecDeque::from(to_insert);
+        // 4. We have to iterate over all the level-zero cells and insert the new items that are in them in the database at the next level if we need to
+        //    TODO: Could be parallelized
+        for cell in CellIndex::base_cells() {
+            let bitmap = self.cell_db().get(wtxn, &Key::Cell(cell))?.unwrap_or_default();
+            // Awesome, we don't care about what's in the cell, wether it have multiple levels or not
+            if bitmap.len() < self.threshold || bitmap.intersection_len(&inserted_items) == 0 {
+                continue;
+            }
+            // TODO: Unbounded RAM consumption:
+            //   - We could push the items in a bumpalo and stops when we don't have enough space left
+            //   - Or use an LRU cache and re-fetch them from the database when needed (but it'll be slower imo)
+            let mut items = Vec::new();
+            for item in bitmap.iter() {
+                let geojson = self.item_db().get(wtxn, &Key::Item(item))?.unwrap();
+                let shape = Geometry::try_from(geojson).unwrap();
+                items.push((item, shape));
+            }
+            self.insert_chunk_of_items_recursively(wtxn, items, cell)?;
+        }
 
+        /*
         while let Some((current_item, shape, cell)) = to_insert.pop_front() {
             let cell_polygon = h3o::geom::SolventBuilder::new()
                 .build()
@@ -329,6 +347,7 @@ impl Cellulite {
                 }
             }
         }
+        */
 
         Ok(())
     }
@@ -354,7 +373,7 @@ impl Cellulite {
 
             unsafe {
                 if bitmap.is_empty() {
-                    iter.del_current();
+                    iter.del_current()?;
                 } else {
                     iter.put_current(&key, &bitmap)?;
                 }
@@ -374,7 +393,7 @@ impl Cellulite {
 
             unsafe {
                 if bitmap.is_empty() {
-                    iter.del_current();
+                    iter.del_current()?;
                 } else {
                     iter.put_current(&key, &bitmap)?;
                 }
@@ -383,7 +402,7 @@ impl Cellulite {
         Ok(())
     }
 
-    fn insert_items_at_level_zero(&self, wtxn: &mut RwTxn, items: RoaringBitmap) -> Result<()> {
+    fn insert_items_at_level_zero(&self, wtxn: &mut RwTxn, items: &RoaringBitmap) -> Result<()> {
         // level 0 only have 122 cells => that fits in RAM
         let mut to_insert = HashMap::with_capacity(122);
         // TODO: Could be parallelized very easily, we just have to merge the hashmap at the end or use a shared map
@@ -474,6 +493,104 @@ impl Cellulite {
                 panic!("Doesn't support lines")
             }
         }
+    }
+
+    /// To insert a bunch of items in a cell we have to:
+    /// 1. Get all the possible children cells
+    /// 2. See which items fits in which cells by doing an intersection between the shape and the child cell
+    /// 3. Insert the cells in the database
+    /// 4. For all the cells that are too large:
+    ///  - If it was already too large, repeat the process with the next resolution
+    ///  - If it **just became** too large. Retrieve all the items it contains and add them to the list of items to handle
+    ///    Call ourselves recursively on the next resolution
+    fn insert_chunk_of_items_recursively(
+        &self,
+        wtxn: &mut RwTxn,
+        items: Vec<(ItemId, Geometry)>,
+        cell: CellIndex,
+    ) -> Result<()> {
+        // 1. If we cannot increase the resolution, we are done
+        let Some(children_cells) = get_children_cells(cell)? else {
+            return Ok(());
+        };
+        // 2.
+        let mut to_insert = HashMap::with_capacity(children_cells.len());
+        let mut to_insert_in_belly = HashMap::new();
+
+        for &cell in children_cells.iter() {
+            let cell_shape = get_cell_shape(cell);
+            for (item, shape) in items.iter() {
+                match intersect_shape_with_cell_shape(&shape, &cell_shape) {
+                    RelationToCell::ContainsCell => {
+                        let entry = to_insert_in_belly
+                            .entry(cell)
+                            .or_insert_with(RoaringBitmap::new);
+                        entry.insert(*item);
+                    }
+                    RelationToCell::IntersectsCell(shape) => {
+                        let entry = to_insert
+                            .entry(cell)
+                            .or_insert_with(|| (RoaringBitmap::new(), Vec::new()));
+                        entry.0.insert(*item);
+                        entry.1.push((*item, shape));
+                    }
+                    RelationToCell::NoRelation => (),
+                }
+            }
+        }
+        // 3.
+        for (cell, items) in to_insert_in_belly {
+            let mut bitmap = self
+                .inner_shape_cell_db()
+                .get(wtxn, &Key::Cell(cell))?
+                .unwrap_or_default();
+            bitmap |= items;
+            self.inner_shape_cell_db()
+                .put(wtxn, &Key::Cell(cell), &bitmap)?;
+        }
+
+        for (cell, (items, mut items_to_insert)) in to_insert {
+            let original_bitmap = self
+                .cell_db()
+                .get(wtxn, &Key::Cell(cell))?
+                .unwrap_or_default();
+            let new_bitmap = &original_bitmap | &items;
+            self.cell_db().put(wtxn, &Key::Cell(cell), &new_bitmap)?;
+            if original_bitmap.len() >= self.threshold {
+                // if we were already too large we can immediately jump to the next resolution
+                self.insert_chunk_of_items_recursively(wtxn, items_to_insert, cell)?;
+            } else if new_bitmap.len() >= self.threshold {
+                let cell_shape = get_cell_shape(cell);
+                let mut belly_items = RoaringBitmap::new();
+
+                // If we just became too large, we have to retrieve the items that were already in the database insert them at the next resolution
+                for item_id in original_bitmap.iter() {
+                    let item = self.item_db().get(wtxn, &Key::Item(item_id))?.unwrap();
+                    let item = Geometry::try_from(item).unwrap();
+                    match intersect_shape_with_cell_shape(&item, &cell_shape) {
+                        RelationToCell::ContainsCell => {
+                            belly_items.insert(item_id);
+                        }
+                        RelationToCell::IntersectsCell(shape) => {
+                            items_to_insert.push((item_id, shape));
+                        }
+                        RelationToCell::NoRelation => (),
+                    }
+                }
+
+                let mut inner_shape_cells = self
+                    .inner_shape_cell_db()
+                    .get(wtxn, &Key::Cell(cell))?
+                    .unwrap_or_default();
+                inner_shape_cells |= belly_items;
+                self.inner_shape_cell_db()
+                    .put(wtxn, &Key::Cell(cell), &inner_shape_cells)?;
+
+                self.insert_chunk_of_items_recursively(wtxn, items_to_insert, cell)?;
+            }
+            // If we are not too large, we have nothing else to do yaay
+        }
+        Ok(())
     }
 
     pub fn stats(&self, rtxn: &RoTxn) -> Result<Stats> {
@@ -654,4 +771,102 @@ pub struct Stats {
     pub total_cells: usize,
     pub total_items: usize,
     pub cells_by_resolution: BTreeMap<Resolution, usize>,
+}
+
+enum RelationToCell {
+    ContainsCell,
+    IntersectsCell(Geometry),
+    NoRelation,
+}
+
+/// Compute the relation between a shape and a cell shape.
+/// It modifies the shape on the fly to keep the part that fits within the cell.
+fn intersect_shape_with_cell_shape(shape: &Geometry, cell_shape: &MultiPolygon) -> RelationToCell {
+    match shape {
+        Geometry::Point(point) => {
+            if cell_shape.contains(point) {
+                RelationToCell::ContainsCell
+            } else {
+                RelationToCell::NoRelation
+            }
+        }
+        Geometry::MultiPoint(multi_point) => {
+            let mut ret = Vec::new();
+            for point in multi_point.iter() {
+                if cell_shape.contains(point) {
+                    ret.push(*point);
+                }
+            }
+            if ret.is_empty() {
+                RelationToCell::NoRelation
+            } else {
+                RelationToCell::IntersectsCell(Geometry::MultiPoint(ret.into()))
+            }
+        }
+        Geometry::Polygon(poly) => {
+            if poly.contains(cell_shape) {
+                RelationToCell::ContainsCell
+            } else {
+                let intersection = poly.intersection(cell_shape);
+                if intersection.is_empty() {
+                    RelationToCell::NoRelation
+                } else {
+                    RelationToCell::IntersectsCell(intersection.into())
+                }
+            }
+        }
+        Geometry::MultiPolygon(multi_polygon) => {
+            let mut ret = Vec::new();
+            for poly in multi_polygon.iter() {
+                if poly.contains(cell_shape) {
+                    return RelationToCell::ContainsCell;
+                }
+                let mut intersection = poly.intersection(cell_shape);
+                if !intersection.is_empty() {
+                    ret.append(&mut intersection.0);
+                }
+            }
+            if ret.is_empty() {
+                RelationToCell::NoRelation
+            } else {
+                RelationToCell::IntersectsCell(Geometry::MultiPolygon(ret.into()))
+            }
+        }
+        Geometry::Rect(rect) => {
+            intersect_shape_with_cell_shape(&rect.to_polygon().into(), cell_shape)
+        }
+        Geometry::Triangle(triangle) => {
+            intersect_shape_with_cell_shape(&triangle.to_polygon().into(), cell_shape)
+        }
+        Geometry::GeometryCollection(_geometry_collection) => todo!(),
+        Geometry::Line(_) | Geometry::LineString(_) | Geometry::MultiLineString(_) => {
+            unreachable!("lines not supported")
+        }
+    }
+}
+
+fn get_cell_shape(cell: CellIndex) -> MultiPolygon {
+    let cell_polygon = h3o::geom::SolventBuilder::new()
+        .build()
+        .dissolve(Some(cell))
+        .unwrap();
+    cell_polygon
+}
+
+/// Return None if we cannot increase the resolution
+/// Otherwise, return the children cells in a very non-efficient way
+/// Note: We cannot use the `get_children_cells` function because it doesn't return the full coverage of our cells and leaves holes
+/// TODO: Optimize this to avoid the whole dissolve + tiler thingy. We can probably do better with the grid_disk at distance 1 or 2 idk
+fn get_children_cells(cell: CellIndex) -> Result<Option<Vec<CellIndex>>, Error> {
+    let Some(next_res) = cell.resolution().succ() else {
+        return Ok(None);
+    };
+    let cell_polygon = get_cell_shape(cell);
+    let mut tiler = TilerBuilder::new(next_res)
+        .containment_mode(ContainmentMode::Covers)
+        .build();
+    for polygon in cell_polygon.0.into_iter() {
+        tiler.add(polygon)?;
+    }
+    Ok(Some(tiler.into_coverage().collect()))
 }
