@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use ::roaring::RoaringBitmap;
 use geo::{BooleanOps, Contains, Coord, Geometry, HasDimensions, Intersects};
@@ -9,7 +9,10 @@ use h3o::{
     geom::{ContainmentMode, TilerBuilder},
     CellIndex, LatLng, Resolution,
 };
-use heed::{types::SerdeJson, RoTxn, RwTxn, Unspecified};
+use heed::{
+    types::{SerdeJson, Unit},
+    RoTxn, RwTxn, Unspecified,
+};
 use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 
 mod keys;
@@ -110,8 +113,78 @@ impl Cellulite {
     }
 
     pub fn add(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
-        let shape = Geometry::try_from(geo.clone()).unwrap();
         self.item_db().put(wtxn, &Key::Item(item), geo)?;
+        self.updated_db().put(wtxn, &Key::Update(item), &())?;
+        Ok(())
+    }
+
+    pub fn delete(&self, wtxn: &mut RwTxn, item: ItemId) -> Result<()> {
+        self.deleted_db().put(wtxn, &Key::Remove(item), &())?;
+        Ok(())
+    }
+
+    fn retrieve_and_clear_inserted_items(&self, wtxn: &mut RwTxn) -> Result<RoaringBitmap> {
+        let mut bitmap = RoaringBitmap::new();
+        let mut iter = self
+            .db
+            .remap_types::<KeyPrefixVariantCodec, Unit>()
+            .prefix_iter_mut(wtxn, &KeyVariant::Update)?
+            .remap_types::<KeyCodec, Unit>();
+        while let Some(ret) = iter.next() {
+            let (Key::Update(item), ()) = ret? else {
+                unreachable!()
+            };
+            // safe because keys are ordered
+            bitmap.push(item);
+            // safe because we own the ItemId
+            unsafe {
+                iter.del_current();
+            }
+        }
+        Ok(bitmap)
+    }
+
+    fn retrieve_and_clear_deleted_items(&self, wtxn: &mut RwTxn) -> Result<RoaringBitmap> {
+        let mut bitmap = RoaringBitmap::new();
+        let mut iter = self
+            .db
+            .remap_types::<KeyPrefixVariantCodec, Unit>()
+            .prefix_iter_mut(wtxn, &KeyVariant::Remove)?
+            .remap_types::<KeyCodec, Unit>();
+        while let Some(ret) = iter.next() {
+            let (Key::Remove(item), ()) = ret? else {
+                unreachable!()
+            };
+            // safe because keys are ordered
+            bitmap.push(item);
+            // safe because we own the ItemId
+            unsafe {
+                iter.del_current();
+            }
+        }
+        Ok(bitmap)
+    }
+
+    /// Indexing is in 4 steps:
+    /// 1. We retrieve all the items that have been updated since the last indexing
+    /// 2. We remove the deleted items from the database and remove the empty cells at the same time
+    ///    TODO: If a cell becomes too small we cannot delete it so the database won't shrink properly but won't be corrupted either
+    /// 3. We insert the new items in the database **only at the level 0**
+    /// 4. We take each level-zero cell one by one and if it contains new items we insert them in the database in batch at the next level
+    ///    TODO: Could be parallelized fairly easily I think
+    pub fn build(&self, wtxn: &mut RwTxn) -> Result<()> {
+        // 1.
+        let inserted_items = self.retrieve_and_clear_inserted_items(wtxn)?;
+        let removed_items = self.retrieve_and_clear_deleted_items(wtxn)?;
+
+        // 2.
+        self.remove_deleted_items(wtxn, removed_items)?;
+
+        // 3.
+        self.insert_items_at_level_zero(wtxn, inserted_items)?;
+
+        // 4.
+        //         let shape = Geometry::try_from(geo.clone()).unwrap();
         let to_insert = self.explode_level_zero_geo(wtxn, item, shape)?;
         let mut to_insert = VecDeque::from(to_insert);
 
@@ -260,30 +333,97 @@ impl Cellulite {
         Ok(())
     }
 
+    /// 1. We remove all the items by id of the items database
+    /// 2. We do a scan of the whole cell database and remove the items from the bitmaps
+    /// 3. We do a scan of the whole inner_shape_cell_db and remove the items from the bitmaps
+    ///
+    /// TODO: We could optimize 2 and 3 by diving into the cells and stopping early when one is empty
+    fn remove_deleted_items(&self, wtxn: &mut RwTxn, items: RoaringBitmap) -> Result<()> {
+        for item in items.iter() {
+            self.item_db().delete(wtxn, &Key::Item(item))?;
+        }
+        let mut iter = self
+            .cell_db()
+            .remap_key_type::<KeyPrefixVariantCodec>()
+            .prefix_iter_mut(wtxn, &KeyVariant::Cell)?
+            .remap_key_type::<KeyCodec>();
+        while let Some(ret) = iter.next() {
+            let (key, mut bitmap) = ret?;
+            bitmap -= &items;
+            // safe because everything is owned
+
+            unsafe {
+                if bitmap.is_empty() {
+                    iter.del_current();
+                } else {
+                    iter.put_current(&key, &bitmap)?;
+                }
+            }
+        }
+        drop(iter);
+
+        let mut iter = self
+            .inner_shape_cell_db()
+            .remap_key_type::<KeyPrefixVariantCodec>()
+            .prefix_iter_mut(wtxn, &KeyVariant::InnerShape)?
+            .remap_key_type::<KeyCodec>();
+        while let Some(ret) = iter.next() {
+            let (key, mut bitmap) = ret?;
+            bitmap -= &items;
+            // safe because everything is owned
+
+            unsafe {
+                if bitmap.is_empty() {
+                    iter.del_current();
+                } else {
+                    iter.put_current(&key, &bitmap)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_items_at_level_zero(&self, wtxn: &mut RwTxn, items: RoaringBitmap) -> Result<()> {
+        // level 0 only have 122 cells => that fits in RAM
+        let mut to_insert = HashMap::with_capacity(122);
+        // TODO: Could be parallelized very easily, we just have to merge the hashmap at the end or use a shared map
+        for item in items.iter() {
+            let geojson = self.item_db().get(wtxn, &Key::Item(item))?.unwrap();
+            let shape = Geometry::try_from(geojson).unwrap();
+            let cells = self.explode_level_zero_geo(wtxn, item, shape)?;
+            for cell in cells {
+                to_insert
+                    .entry(cell)
+                    .or_insert_with(RoaringBitmap::new)
+                    .insert(item);
+            }
+        }
+        for (cell, items) in to_insert {
+            self.cell_db().put(wtxn, &Key::Cell(cell), &items)?;
+        }
+        Ok(())
+    }
+
     fn explode_level_zero_geo(
         &self,
         wtxn: &mut RwTxn,
         item: ItemId,
         shape: Geometry,
-    ) -> Result<Vec<(ItemId, Geometry, CellIndex)>, Error> {
+    ) -> Result<Vec<CellIndex>, Error> {
         match shape {
             Geometry::Point(point) => {
                 let cell = LatLng::new(point.y(), point.x())
                     .unwrap()
                     .to_cell(Resolution::Zero);
-                Ok(vec![(item, shape, cell)])
+                Ok(vec![cell])
             }
             Geometry::MultiPoint(multi_point) => Ok(multi_point
                 .0
                 .iter()
                 .map(|point| {
-                    (
-                        item,
-                        Geometry::Point(point.clone()),
-                        LatLng::new(point.y(), point.x())
-                            .unwrap()
-                            .to_cell(Resolution::Zero),
-                    )
+                    LatLng::new(point.y(), point.x())
+                        .unwrap()
+                        .to_cell(Resolution::Zero)
                 })
                 .collect()),
 
@@ -309,7 +449,7 @@ impl Cellulite {
                             .put(wtxn, &Key::InnerShape(cell), &bitmap)?;
                     } else {
                         // Otherwise use insert_shape_in_cell for partial overlaps
-                        to_insert.push((item, Geometry::Polygon(polygon.clone()), cell));
+                        to_insert.push(cell);
                     }
                 }
                 Ok(to_insert)
@@ -363,6 +503,14 @@ impl Cellulite {
     }
 
     fn inner_shape_cell_db(&self) -> heed::Database<KeyCodec, RoaringBitmapCodec> {
+        self.db.remap_data_type()
+    }
+
+    fn updated_db(&self) -> heed::Database<KeyCodec, Unit> {
+        self.db.remap_data_type()
+    }
+
+    fn deleted_db(&self) -> heed::Database<KeyCodec, Unit> {
         self.db.remap_data_type()
     }
 
