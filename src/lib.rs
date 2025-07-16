@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use ::roaring::RoaringBitmap;
-use geo::{
-    BooleanOps, Contains, Coord, Geometry, HasDimensions, Intersects, MultiPolygon,
-};
+use geo::{BooleanOps, Contains, Coord, Geometry, HasDimensions, Intersects, MultiPolygon};
 use geo_types::Polygon;
 use geojson::GeoJson;
 use h3o::{
@@ -29,12 +27,31 @@ pub type ItemId = u32;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    // User errors
+    #[error("Document with id `{0}` contains a {1} but only `Geometry` type is supported")]
+    InvalidGeoJsonTypeFormat(ItemId, &'static str),
+    #[error("Document with id `{0}` contains a {1} but only `Point`, `Polygon`, `MultiPoint` and `MultiPolygon` types are supported")]
+    InvalidGeometryTypeFormat(ItemId, &'static str),
+
+    // External errors, sometimes it's a user error and sometimes it's not
     #[error(transparent)]
     Heed(#[from] heed::Error),
     #[error(transparent)]
     InvalidLatLng(#[from] InvalidLatLng),
     #[error(transparent)]
     InvalidGeometry(#[from] InvalidGeometry),
+    #[error(transparent)]
+    InvalidGeoJson(#[from] geojson::Error),
+
+    // Internal errors
+    #[error("Internal error: unexpected document id `{0}` missing at `{1}`")]
+    InternalDocIdMissing(ItemId, String),
+}
+
+macro_rules! pos {
+    () => {
+        format!("{}:{}:{}", file!(), line!(), column!())
+    };
 }
 
 type Result<O, E = Error> = std::result::Result<O, E>;
@@ -114,8 +131,29 @@ impl Cellulite {
             }))
     }
 
+    fn validate_geojson(&self, item: ItemId, geo: &GeoJson) -> Result<()> {
+        match geo {
+            GeoJson::Geometry(geometry) => match geometry.value {
+                geojson::Value::Point(_)
+                | geojson::Value::Polygon(_)
+                | geojson::Value::MultiPoint(_)
+                | geojson::Value::MultiPolygon(_) => Ok(()),
+                geojson::Value::LineString(_) | geojson::Value::MultiLineString(_) => {
+                    Err(Error::InvalidGeometryTypeFormat(item, "LineString"))
+                }
+                geojson::Value::GeometryCollection(_) => {
+                    Err(Error::InvalidGeometryTypeFormat(item, "GeometryCollection"))
+                }
+            },
+            GeoJson::Feature(_feature) => Err(Error::InvalidGeoJsonTypeFormat(item, "Feature")),
+            GeoJson::FeatureCollection(_feature_collection) => {
+                Err(Error::InvalidGeoJsonTypeFormat(item, "FeatureCollection"))
+            }
+        }
+    }
+
     pub fn add(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
-        self.item_db().put(wtxn, &Key::Item(item), geo)?;
+        self.validate_geojson(item, geo)?;
         self.updated_db().put(wtxn, &Key::Update(item), &())?;
         Ok(())
     }
@@ -188,7 +226,10 @@ impl Cellulite {
         // 4. We have to iterate over all the level-zero cells and insert the new items that are in them in the database at the next level if we need to
         //    TODO: Could be parallelized
         for cell in CellIndex::base_cells() {
-            let bitmap = self.cell_db().get(wtxn, &Key::Cell(cell))?.unwrap_or_default();
+            let bitmap = self
+                .cell_db()
+                .get(wtxn, &Key::Cell(cell))?
+                .unwrap_or_default();
             // Awesome, we don't care about what's in the cell, wether it have multiple levels or not
             if bitmap.len() < self.threshold || bitmap.intersection_len(&inserted_items) == 0 {
                 continue;
@@ -198,8 +239,11 @@ impl Cellulite {
             //   - Or use an LRU cache and re-fetch them from the database when needed (but it'll be slower imo)
             let mut items = Vec::new();
             for item in bitmap.iter() {
-                let geojson = self.item_db().get(wtxn, &Key::Item(item))?.unwrap();
-                let shape = Geometry::try_from(geojson).unwrap();
+                let geojson = self
+                    .item_db()
+                    .get(wtxn, &Key::Item(item))?
+                    .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
+                let shape = Geometry::try_from(geojson)?;
                 items.push((item, shape));
             }
             self.insert_chunk_of_items_recursively(wtxn, items, cell)?;
@@ -407,8 +451,11 @@ impl Cellulite {
         let mut to_insert = HashMap::with_capacity(122);
         // TODO: Could be parallelized very easily, we just have to merge the hashmap at the end or use a shared map
         for item in items.iter() {
-            let geojson = self.item_db().get(wtxn, &Key::Item(item))?.unwrap();
-            let shape = Geometry::try_from(geojson).unwrap();
+            let geojson = self
+                .item_db()
+                .get(wtxn, &Key::Item(item))?
+                .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
+            let shape = Geometry::try_from(geojson)?;
             let cells = self.explode_level_zero_geo(wtxn, item, shape)?;
             for cell in cells {
                 to_insert
@@ -418,7 +465,10 @@ impl Cellulite {
             }
         }
         for (cell, items) in to_insert {
-            let mut bitmap = self.cell_db().get(wtxn, &Key::Cell(cell))?.unwrap_or_default();
+            let mut bitmap = self
+                .cell_db()
+                .get(wtxn, &Key::Cell(cell))?
+                .unwrap_or_default();
             bitmap |= items;
             self.cell_db().put(wtxn, &Key::Cell(cell), &bitmap)?;
         }
@@ -568,8 +618,11 @@ impl Cellulite {
 
                 // If we just became too large, we have to retrieve the items that were already in the database insert them at the next resolution
                 for item_id in original_bitmap.iter() {
-                    let item = self.item_db().get(wtxn, &Key::Item(item_id))?.unwrap();
-                    let item = Geometry::try_from(item).unwrap();
+                    let item = self
+                        .item_db()
+                        .get(wtxn, &Key::Item(item_id))?
+                        .ok_or_else(|| Error::InternalDocIdMissing(item_id, pos!()))?;
+                    let item = Geometry::try_from(item)?;
                     match shape_relation_with_cell(&item, &cell_shape) {
                         RelationToCell::ContainsCell => {
                             belly_items.insert(item_id);
@@ -835,9 +888,7 @@ fn shape_relation_with_cell(shape: &Geometry, cell_shape: &MultiPolygon) -> Rela
                 RelationToCell::IntersectsCell(Geometry::MultiPolygon(ret.into()))
             }
         }
-        Geometry::Rect(rect) => {
-            shape_relation_with_cell(&rect.to_polygon().into(), cell_shape)
-        }
+        Geometry::Rect(rect) => shape_relation_with_cell(&rect.to_polygon().into(), cell_shape),
         Geometry::Triangle(triangle) => {
             shape_relation_with_cell(&triangle.to_polygon().into(), cell_shape)
         }
