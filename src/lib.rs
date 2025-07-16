@@ -418,7 +418,9 @@ impl Cellulite {
             }
         }
         for (cell, items) in to_insert {
-            self.cell_db().put(wtxn, &Key::Cell(cell), &items)?;
+            let mut bitmap = self.cell_db().get(wtxn, &Key::Cell(cell))?.unwrap_or_default();
+            bitmap |= items;
+            self.cell_db().put(wtxn, &Key::Cell(cell), &bitmap)?;
         }
         Ok(())
     }
