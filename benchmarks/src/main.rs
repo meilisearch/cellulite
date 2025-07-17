@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, sync::atomic::{AtomicBool, Ordering}, time::Duration};
 
 use cellulite::{Cellulite, Database, roaring::RoaringBitmapCodec};
 use clap::{Parser, ValueEnum};
@@ -8,6 +8,7 @@ use heed::{
     EnvOpenOptions,
     types::{Bytes, Str},
 };
+use steppe::Progress;
 use roaring::RoaringBitmap;
 use tempfile::TempDir;
 
@@ -152,9 +153,25 @@ fn main() {
         }
         println!("Inserted {cpt} points in {:.2?}", time.elapsed());
         println!("Building the index...");
+        let progress = Progress::default();
+        let stop = AtomicBool::new(false);
         let time = std::time::Instant::now();
-        writer.build(&mut wtxn).unwrap();
+
+        std::thread::scope(|s| {
+
+            s.spawn( || {
+                std::thread::sleep(Duration::from_secs(10));
+                while !stop.load(Ordering::Relaxed) {
+                    println!("Progress: {:#?}", progress.as_progress_view());
+                    std::thread::sleep(Duration::from_secs(10));
+                }
+            });
+
+            writer.build(&mut wtxn, &progress).unwrap();
+            stop.store(true, Ordering::Relaxed);
+        });
         println!("Index built in {:?}", time.elapsed());
+        println!("Progress: {:#?}", progress.accumulated_durations());
 
         // If the metadata should be indexed, we must build an fst containing
         // all the names.

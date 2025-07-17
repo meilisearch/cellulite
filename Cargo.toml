@@ -15,6 +15,7 @@ heed = "0.22.0"
 ordered-float = "5.0.0"
 roaring = "0.11.1"
 thiserror = "2.0.12"
+steppe = "0.2.1"
 
 [dependencies]
 geo = { workspace = true }
@@ -25,6 +26,7 @@ heed = { workspace = true }
 ordered-float = { workspace = true }
 roaring = { workspace = true }
 thiserror = { workspace = true }
+steppe = { workspace = true }
 
 [dev-dependencies]
 insta = "1.42.2"

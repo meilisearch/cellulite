@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::{collections::{BTreeMap, HashMap, HashSet, VecDeque}, sync::atomic::Ordering};
 
 use ::roaring::RoaringBitmap;
 use geo::{BooleanOps, Contains, Coord, Geometry, HasDimensions, Intersects, MultiPolygon};
@@ -14,6 +14,7 @@ use heed::{
     RoTxn, RwTxn, Unspecified,
 };
 use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
+use steppe::Progress;
 
 mod keys;
 pub mod roaring;
@@ -24,6 +25,19 @@ use crate::roaring::RoaringBitmapCodec;
 
 pub type Database = heed::Database<KeyCodec, Unspecified>;
 pub type ItemId = u32;
+
+steppe::make_enum_progress! {
+    pub enum BuildSteps {
+        RetrieveAndClearInsertedItems,
+        RetrieveAndClearDeletedItems,
+        RemoveDeletedItemsFromDatabase,
+        InsertItemsAtLevelZero,
+        InsertItemsRecursively,
+    }
+}
+steppe::make_atomic_progress!(Item alias AtomicItemStep => "item");
+steppe::make_atomic_progress!(Cell alias AtomicCellStep => "cell");
+
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -166,7 +180,8 @@ impl Cellulite {
         Ok(())
     }
 
-    fn retrieve_and_clear_inserted_items(&self, wtxn: &mut RwTxn) -> Result<RoaringBitmap> {
+    fn retrieve_and_clear_inserted_items(&self, wtxn: &mut RwTxn, progress: &Progress) -> Result<RoaringBitmap> {
+        progress.update(BuildSteps::RetrieveAndClearInsertedItems);
         let mut bitmap = RoaringBitmap::new();
         let mut iter = self
             .db
@@ -187,7 +202,8 @@ impl Cellulite {
         Ok(bitmap)
     }
 
-    fn retrieve_and_clear_deleted_items(&self, wtxn: &mut RwTxn) -> Result<RoaringBitmap> {
+    fn retrieve_and_clear_deleted_items(&self, wtxn: &mut RwTxn, progress: &Progress) -> Result<RoaringBitmap> {
+        progress.update(BuildSteps::RetrieveAndClearDeletedItems);
         let mut bitmap = RoaringBitmap::new();
         let mut iter = self
             .db
@@ -215,19 +231,20 @@ impl Cellulite {
     /// 3. We insert the new items in the database **only at the level 0**
     /// 4. We take each level-zero cell one by one and if it contains new items we insert them in the database in batch at the next level
     ///    TODO: Could be parallelized fairly easily I think
-    pub fn build(&self, wtxn: &mut RwTxn) -> Result<()> {
+    pub fn build(&self, wtxn: &mut RwTxn, progress: &Progress) -> Result<()> {
         // 1.
-        let inserted_items = self.retrieve_and_clear_inserted_items(wtxn)?;
-        let removed_items = self.retrieve_and_clear_deleted_items(wtxn)?;
+        let inserted_items = self.retrieve_and_clear_inserted_items(wtxn, progress)?;
+        let removed_items = self.retrieve_and_clear_deleted_items(wtxn, progress)?;
 
         // 2.
-        self.remove_deleted_items(wtxn, removed_items)?;
+        self.remove_deleted_items(wtxn, progress, removed_items)?;
 
         // 3.
-        self.insert_items_at_level_zero(wtxn, &inserted_items)?;
+        self.insert_items_at_level_zero(wtxn, progress, &inserted_items)?;
 
         // 4. We have to iterate over all the level-zero cells and insert the new items that are in them in the database at the next level if we need to
         //    TODO: Could be parallelized
+        progress.update(BuildSteps::InsertItemsRecursively); // we cannot detail more here
         for cell in CellIndex::base_cells() {
             let bitmap = self
                 .cell_db()
@@ -260,10 +277,27 @@ impl Cellulite {
     /// 3. We do a scan of the whole inner_shape_cell_db and remove the items from the bitmaps
     ///
     /// TODO: We could optimize 2 and 3 by diving into the cells and stopping early when one is empty
-    fn remove_deleted_items(&self, wtxn: &mut RwTxn, items: RoaringBitmap) -> Result<()> {
+    fn remove_deleted_items(&self, wtxn: &mut RwTxn, progress: &Progress, items: RoaringBitmap) -> Result<()> {
+        progress.update(BuildSteps::RemoveDeletedItemsFromDatabase);
+        steppe::make_enum_progress! {
+            pub enum RemoveDeletedItemsSteps {
+                RemoveDeletedItemsFromItemsDatabase,
+                RemoveDeletedItemsFromCellsDatabase,
+                RemoveDeletedItemsFromInnerShapeCellsDatabase,
+            }
+        }
+
+        progress.update(RemoveDeletedItemsSteps::RemoveDeletedItemsFromItemsDatabase);
+        let (atomic, step) = AtomicItemStep::new(items.len());
+        progress.update(step.clone());
         for item in items.iter() {
             self.item_db().delete(wtxn, &Key::Item(item))?;
+            atomic.fetch_add(1, Ordering::Relaxed);
         }
+
+        progress.update(RemoveDeletedItemsSteps::RemoveDeletedItemsFromCellsDatabase);
+        atomic.store(0, Ordering::Relaxed);
+        progress.update(step.clone());
         let mut iter = self
             .cell_db()
             .remap_key_type::<KeyPrefixVariantCodec>()
@@ -271,9 +305,12 @@ impl Cellulite {
             .remap_key_type::<KeyCodec>();
         while let Some(ret) = iter.next() {
             let (key, mut bitmap) = ret?;
+            let len = bitmap.len();
             bitmap -= &items;
-            // safe because everything is owned
+            let removed = len - bitmap.len();
+            atomic.fetch_add(removed, Ordering::Relaxed);
 
+            // safe because everything is owned
             unsafe {
                 if bitmap.is_empty() {
                     iter.del_current()?;
@@ -284,6 +321,9 @@ impl Cellulite {
         }
         drop(iter);
 
+        progress.update(RemoveDeletedItemsSteps::RemoveDeletedItemsFromInnerShapeCellsDatabase);
+        atomic.store(0, Ordering::Relaxed);
+        progress.update(step);
         let mut iter = self
             .inner_shape_cell_db()
             .remap_key_type::<KeyPrefixVariantCodec>()
@@ -291,9 +331,12 @@ impl Cellulite {
             .remap_key_type::<KeyCodec>();
         while let Some(ret) = iter.next() {
             let (key, mut bitmap) = ret?;
+            let len = bitmap.len();
             bitmap -= &items;
-            // safe because everything is owned
+            let removed = len - bitmap.len();
+            atomic.fetch_add(removed, Ordering::Relaxed);
 
+            // safe because everything is owned
             unsafe {
                 if bitmap.is_empty() {
                     iter.del_current()?;
@@ -305,7 +348,16 @@ impl Cellulite {
         Ok(())
     }
 
-    fn insert_items_at_level_zero(&self, wtxn: &mut RwTxn, items: &RoaringBitmap) -> Result<()> {
+    fn insert_items_at_level_zero(&self, wtxn: &mut RwTxn, progress: &Progress, items: &RoaringBitmap) -> Result<()> {
+        progress.update(BuildSteps::InsertItemsAtLevelZero);
+        steppe::make_enum_progress! {
+            pub enum InsertItemsAtLevelZeroSteps {
+                InsertItemsAtLevelZero,
+                WriteCellsToDatabase,
+            }
+        }
+        let (atomic, step) = AtomicItemStep::new(items.len());
+        progress.update(step);
         // level 0 only have 122 cells => that fits in RAM
         let mut to_insert = HashMap::with_capacity(122);
         // TODO: Could be parallelized very easily, we just have to merge the hashmap at the end or use a shared map
@@ -322,7 +374,11 @@ impl Cellulite {
                     .or_insert_with(RoaringBitmap::new)
                     .insert(item);
             }
+            atomic.fetch_add(1, Ordering::Relaxed);
         }
+        progress.update(InsertItemsAtLevelZeroSteps::WriteCellsToDatabase);
+        let (atomic, step) = AtomicCellStep::new(to_insert.len() as u64);
+        progress.update(step);
         for (cell, items) in to_insert {
             let mut bitmap = self
                 .cell_db()
@@ -330,6 +386,7 @@ impl Cellulite {
                 .unwrap_or_default();
             bitmap |= items;
             self.cell_db().put(wtxn, &Key::Cell(cell), &bitmap)?;
+            atomic.fetch_add(1, Ordering::Relaxed);
         }
         Ok(())
     }
