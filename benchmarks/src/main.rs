@@ -8,12 +8,12 @@ use heed::{
     EnvOpenOptions,
     types::{Bytes, Str},
 };
-use steppe::Progress;
+use steppe::DefaultProgress;
 use roaring::RoaringBitmap;
 use tempfile::TempDir;
 
 mod france_arrondissements;
-mod france_cadastre;
+mod france_cadastre_addresses;
 mod france_cantons;
 mod france_communes;
 mod france_departements;
@@ -21,6 +21,7 @@ mod france_query_zones;
 mod france_regions;
 mod france_shops;
 mod france_zones;
+mod france_cadastre_parcelles;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -45,6 +46,10 @@ struct Args {
     #[arg(long, default_value_t = false)]
     skip_queries: bool,
 
+    /// Set the number of items to index, will be capped at the number of items in the dataset
+    #[arg(long)]
+    nb_items: Option<usize>,
+
     /// Skip query if set
     #[arg(long)]
     db: Option<PathBuf>,
@@ -55,7 +60,8 @@ enum Dataset {
     /// 100_000 points representing shops in France
     Shop,
     /// 22_000_000 points representing houses and buildings in France
-    Cadastre,
+    CadastreAddr,
+    CadastreParcelle,
     Canton,
     Arrondissement,
     Commune,
@@ -71,10 +77,13 @@ fn main() {
 
     println!("Starting...");
     let time = std::time::Instant::now();
-    let input = match args.dataset {
+    let mut input = match args.dataset {
         Dataset::Shop => &mut france_shops::parse() as &mut dyn Iterator<Item = (String, GeoJson)>,
-        Dataset::Cadastre => {
-            &mut france_cadastre::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+        Dataset::CadastreAddr => {
+            &mut france_cadastre_addresses::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+        }
+        Dataset::CadastreParcelle => {
+            &mut france_cadastre_parcelles::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
         }
         Dataset::Canton => {
             &mut france_cantons::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
@@ -93,6 +102,7 @@ fn main() {
         }
         Dataset::Zone => &mut france_zones::parse() as &mut dyn Iterator<Item = (String, GeoJson)>,
     };
+    let input = input.take(args.nb_items.unwrap_or(usize::MAX));
 
     println!("Deserialized the points in {:?}", time.elapsed());
 
@@ -153,7 +163,8 @@ fn main() {
         }
         println!("Inserted {cpt} points in {:.2?}", time.elapsed());
         println!("Building the index...");
-        let progress = Progress::default();
+        let progress = DefaultProgress::default();
+        progress.as_progress_view();
         let stop = AtomicBool::new(false);
         let time = std::time::Instant::now();
 
@@ -162,7 +173,7 @@ fn main() {
             s.spawn( || {
                 std::thread::sleep(Duration::from_secs(10));
                 while !stop.load(Ordering::Relaxed) {
-                    println!("Progress: {:#?}", progress.as_progress_view());
+                    println!("Progress: {:#?}", progress.accumulated_durations());
                     std::thread::sleep(Duration::from_secs(10));
                 }
             });
