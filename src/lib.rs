@@ -180,7 +180,7 @@ impl Cellulite {
         Ok(())
     }
 
-    fn retrieve_and_clear_inserted_items(&self, wtxn: &mut RwTxn, progress: &Progress) -> Result<RoaringBitmap> {
+    fn retrieve_and_clear_inserted_items(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<RoaringBitmap> {
         progress.update(BuildSteps::RetrieveAndClearInsertedItems);
         let mut bitmap = RoaringBitmap::new();
         let mut iter = self
@@ -202,7 +202,7 @@ impl Cellulite {
         Ok(bitmap)
     }
 
-    fn retrieve_and_clear_deleted_items(&self, wtxn: &mut RwTxn, progress: &Progress) -> Result<RoaringBitmap> {
+    fn retrieve_and_clear_deleted_items(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<RoaringBitmap> {
         progress.update(BuildSteps::RetrieveAndClearDeletedItems);
         let mut bitmap = RoaringBitmap::new();
         let mut iter = self
@@ -231,7 +231,7 @@ impl Cellulite {
     /// 3. We insert the new items in the database **only at the level 0**
     /// 4. We take each level-zero cell one by one and if it contains new items we insert them in the database in batch at the next level
     ///    TODO: Could be parallelized fairly easily I think
-    pub fn build(&self, wtxn: &mut RwTxn, progress: &Progress) -> Result<()> {
+    pub fn build(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<()> {
         // 1.
         let inserted_items = self.retrieve_and_clear_inserted_items(wtxn, progress)?;
         let removed_items = self.retrieve_and_clear_deleted_items(wtxn, progress)?;
@@ -277,7 +277,7 @@ impl Cellulite {
     /// 3. We do a scan of the whole inner_shape_cell_db and remove the items from the bitmaps
     ///
     /// TODO: We could optimize 2 and 3 by diving into the cells and stopping early when one is empty
-    fn remove_deleted_items(&self, wtxn: &mut RwTxn, progress: &Progress, items: RoaringBitmap) -> Result<()> {
+    fn remove_deleted_items(&self, wtxn: &mut RwTxn, progress: &impl Progress, items: RoaringBitmap) -> Result<()> {
         progress.update(BuildSteps::RemoveDeletedItemsFromDatabase);
         steppe::make_enum_progress! {
             pub enum RemoveDeletedItemsSteps {
@@ -348,7 +348,7 @@ impl Cellulite {
         Ok(())
     }
 
-    fn insert_items_at_level_zero(&self, wtxn: &mut RwTxn, progress: &Progress, items: &RoaringBitmap) -> Result<()> {
+    fn insert_items_at_level_zero(&self, wtxn: &mut RwTxn, progress: &impl Progress, items: &RoaringBitmap) -> Result<()> {
         progress.update(BuildSteps::InsertItemsAtLevelZero);
         steppe::make_enum_progress! {
             pub enum InsertItemsAtLevelZeroSteps {

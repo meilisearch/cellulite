@@ -17,7 +17,7 @@ use heed::{
     types::{Bytes, Str},
     Database, Env,
 };
-use steppe::Progress;
+use steppe::DefaultProgress;
 use roaring::RoaringBitmap;
 
 #[derive(Clone)]
@@ -250,7 +250,7 @@ impl Runner {
                         )
                         .unwrap();
                 }
-                self.db.build(&mut wtxn, &mut Progress::default()).unwrap();
+                self.db.build(&mut wtxn, &DefaultProgress::default()).unwrap();
 
                 // We must recompute the fst, stats and db cells
                 if !to_insert.is_empty() {
