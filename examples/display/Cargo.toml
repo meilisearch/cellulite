@@ -23,6 +23,7 @@ log = "0.4"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3.19.1"
 heed = { workspace = true }
+steppe = { workspace = true }
 h3o = { workspace = true }
 walkers = "0.35.0"
 geo-types = { workspace = true }
