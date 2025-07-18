@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, ops::Deref};
 
 use geo::Geometry;
 use geojson::GeoJson;
@@ -7,15 +7,22 @@ use heed::{types::SerdeJson, Env, EnvOpenOptions, RoTxn, WithTls};
 use tempfile::TempDir;
 
 use crate::{
-    roaring::RoaringBitmapCodec, MainDb, ItemId, Key, KeyCodec, KeyPrefixVariantCodec,
-    KeyVariant,
+    roaring::RoaringBitmapCodec, Cellulite, ItemId, Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant
 };
 
 pub struct DatabaseHandle {
     pub env: Env<WithTls>,
-    pub database: MainDb,
+    pub database: Cellulite,
     #[allow(unused)]
     pub tempdir: TempDir,
+}
+
+impl Deref for DatabaseHandle {
+    type Target = Cellulite;
+
+    fn deref(&self) -> &Self::Target {
+        &self.database
+    }
 }
 
 impl DatabaseHandle {
@@ -25,6 +32,7 @@ impl DatabaseHandle {
         s.push_str("# Items\n");
         let iter = self
             .database
+            .main
             .remap_types::<KeyPrefixVariantCodec, SerdeJson<GeoJson>>()
             .prefix_iter(rtxn, &KeyVariant::Item)
             .unwrap()
@@ -43,6 +51,7 @@ impl DatabaseHandle {
         s.push_str("# Cells\n");
         let iter = self
             .database
+            .main
             .remap_types::<KeyPrefixVariantCodec, RoaringBitmapCodec>()
             .prefix_iter(rtxn, &KeyVariant::Cell)
             .unwrap()
@@ -67,15 +76,16 @@ fn create_database() -> DatabaseHandle {
     let env = unsafe {
         EnvOpenOptions::new()
             .map_size(200 * 1024 * 1024)
+            .max_dbs(Cellulite::nb_dbs())
             .open(dir.path())
     }
     .unwrap();
     let mut wtxn = env.write_txn().unwrap();
-    let database: MainDb = env.create_database(&mut wtxn, None).unwrap();
+    let cellulite = Cellulite::create_from_env(&env, &mut wtxn).unwrap();
     wtxn.commit().unwrap();
     DatabaseHandle {
         env,
-        database,
+        database: cellulite,
         tempdir: dir,
     }
 }
@@ -98,16 +108,15 @@ impl fmt::Display for NnRes {
 
 #[test]
 fn basic_write() {
-    let handle = create_database();
-    let mut wtxn = handle.env.write_txn().unwrap();
-    let mut writer = Writer::new(handle.database);
-    writer.threshold = 3;
+    let mut db = create_database();
+    let mut wtxn = db.env.write_txn().unwrap();
+    db.database.threshold = 3;
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 0.0,
     ])));
-    writer.add_item(&mut wtxn, 0, &point).unwrap();
+    db.add(&mut wtxn, 0, &point).unwrap();
 
-    insta::assert_snapshot!(handle.snap(&wtxn), @r###"
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
         # Items
         0: (0.0000, 0.0000)
         # Cells
@@ -117,13 +126,13 @@ fn basic_write() {
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 1.0,
     ])));
-    writer.add_item(&mut wtxn, 1, &point).unwrap();
+    db.add(&mut wtxn, 1, &point).unwrap();
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 2.0,
     ])));
-    writer.add_item(&mut wtxn, 2, &point).unwrap();
+    db.add(&mut wtxn, 2, &point).unwrap();
 
-    insta::assert_snapshot!(handle.snap(&wtxn), @r"
+    insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Items
     0: (0.0000, 0.0000)
     1: (1.0000, 0.0000)
@@ -138,9 +147,9 @@ fn basic_write() {
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 3.0,
     ])));
-    writer.add_item(&mut wtxn, 3, &point).unwrap();
+    db.add(&mut wtxn, 3, &point).unwrap();
 
-    insta::assert_snapshot!(handle.snap(&wtxn), @r"
+    insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Items
     0: (0.0000, 0.0000)
     1: (1.0000, 0.0000)
