@@ -17,8 +17,8 @@ use heed::{
     types::{Bytes, Str},
     Database, Env,
 };
-use steppe::default::DefaultProgress;
 use roaring::RoaringBitmap;
+use steppe::default::DefaultProgress;
 
 #[derive(Clone)]
 pub struct Runner {
@@ -250,7 +250,9 @@ impl Runner {
                         )
                         .unwrap();
                 }
-                self.db.build(&mut wtxn, &DefaultProgress::default()).unwrap();
+                self.db
+                    .build(&mut wtxn, &DefaultProgress::default())
+                    .unwrap();
 
                 // We must recompute the fst, stats and db cells
                 if !to_insert.is_empty() {
@@ -282,21 +284,14 @@ impl Runner {
                     let polygon = Polygon::new(LineString(polygon), Vec::new());
                     let mut steps = Vec::new();
                     let now = std::time::Instant::now();
-                    let matched = self
-                        .db
-                        .in_shape(&wtxn, &polygon, &mut |_| ())
-                        .unwrap();
+                    let matched = self.db.in_shape(&wtxn, &polygon, &mut |_| ()).unwrap();
                     let cold = now.elapsed();
-                    self.db
-                        .in_shape(&wtxn, &polygon, &mut |_| ())
-                        .unwrap();
+                    self.db.in_shape(&wtxn, &polygon, &mut |_| ()).unwrap();
                     self.db
                         .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
                         .unwrap();
                     let now = std::time::Instant::now();
-                    self.db
-                        .in_shape(&wtxn, &polygon, &mut |_| ())
-                        .unwrap();
+                    self.db.in_shape(&wtxn, &polygon, &mut |_| ()).unwrap();
                     let hot = now.elapsed();
 
                     *self.filter_stats.lock() = Some(FilterStats {
