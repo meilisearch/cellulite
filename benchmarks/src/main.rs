@@ -186,7 +186,6 @@ fn main() {
             progress.finish();
 
             println!("Index built in {:?}", time.elapsed());
-            println!("Progress: {:#?}", progress.accumulated_durations());
         }
 
         // If the metadata should be indexed, we must build an fst containing
