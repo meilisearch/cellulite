@@ -1,4 +1,4 @@
-use cellulite::{Cellulite, Database};
+use cellulite::Cellulite;
 use egui::{CentralPanel, RichText, Ui};
 use heed::{
     types::{Bytes, Str},
@@ -46,16 +46,16 @@ impl App {
         let env = unsafe {
             EnvOpenOptions::new()
                 .map_size(200 * 1024 * 1024 * 1024)
-                .max_dbs(2)
+                .max_dbs(Cellulite::nb_dbs() + 1)
                 .open(path)
         }
         .unwrap();
         let mut wtxn = env.write_txn().unwrap();
-        let database: Database = env.create_database(&mut wtxn, None).unwrap();
+        let cellulite = Cellulite::create_from_env(&env, &mut wtxn).unwrap();
         let metadata: heed::Database<Str, Bytes> =
             env.create_database(&mut wtxn, Some("metadata")).unwrap();
         wtxn.commit().unwrap();
-        let db = Cellulite::new(database);
+        let db = cellulite;
 
         let runner = Runner::new(env.clone(), db.clone(), metadata.clone());
         let insert_into_database = plugins::InsertIntoDatabase::new(runner.clone());

@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use cellulite::{Cellulite, Database, roaring::RoaringBitmapCodec};
+use cellulite::{Cellulite, roaring::RoaringBitmapCodec};
 use clap::{Parser, ValueEnum};
 use france_query_zones::{gard, le_vigan, nimes, occitanie};
 use geojson::GeoJson;
@@ -126,12 +126,12 @@ fn main() {
     let env = unsafe {
         EnvOpenOptions::new()
             .map_size(200 * 1024 * 1024 * 1024)
-            .max_dbs(2)
+            .max_dbs(Cellulite::nb_dbs() + 1)
             .open(path)
     }
     .unwrap();
     let mut wtxn = env.write_txn().unwrap();
-    let database: Database = env.create_database(&mut wtxn, None).unwrap();
+    let cellulite = Cellulite::create_from_env(&env, &mut wtxn).unwrap();
     let metadata: heed::Database<Str, Bytes> =
         env.create_database(&mut wtxn, Some("metadata")).unwrap();
     wtxn.commit().unwrap();
@@ -143,7 +143,6 @@ fn main() {
         let time = std::time::Instant::now();
         let mut cpt = 0;
         let mut prev_cpt = 0;
-        let writer = Cellulite::new(database);
         let mut wtxn = env.write_txn().unwrap();
 
         let mut print_timer = time;
@@ -161,7 +160,7 @@ fn main() {
                 print_timer = std::time::Instant::now();
                 prev_cpt = cpt;
             }
-            writer.add(&mut wtxn, cpt, &geometry).unwrap();
+            cellulite.add(&mut wtxn, cpt, &geometry).unwrap();
             if args.index_metadata {
                 metadata_builder.entry(name).or_default().insert(cpt);
             }
@@ -170,7 +169,7 @@ fn main() {
         println!("Building the index...");
         let progress = DefaultProgress::default();
         progress.follow_progression_on_tty();
-        writer.build(&mut wtxn, &progress).unwrap();
+        cellulite.build(&mut wtxn, &progress).unwrap();
         progress.finish();
 
         println!("Index built in {:?}", time.elapsed());
@@ -201,12 +200,11 @@ fn main() {
         let repeat = 1000;
 
         let rtxn = env.read_txn().unwrap();
-        let writer = Cellulite::new(database);
         let le_vigan = le_vigan();
         let time = std::time::Instant::now();
-        let result = writer.in_shape(&rtxn, &le_vigan, &mut |_| ()).unwrap();
+        let result = cellulite.in_shape(&rtxn, &le_vigan, &mut |_| ()).unwrap();
         for _ in 0..repeat {
-            let sub_res = writer.in_shape(&rtxn, &le_vigan, &mut |_| ()).unwrap();
+            let sub_res = cellulite.in_shape(&rtxn, &le_vigan, &mut |_| ()).unwrap();
             assert_eq!(result.len(), sub_res.len());
         }
         println!(
@@ -218,9 +216,9 @@ fn main() {
         let time = std::time::Instant::now();
 
         let nimes = nimes();
-        let result = writer.in_shape(&rtxn, &nimes, &mut |_| ()).unwrap();
+        let result = cellulite.in_shape(&rtxn, &nimes, &mut |_| ()).unwrap();
         for _ in 0..repeat {
-            let sub_res = writer.in_shape(&rtxn, &nimes, &mut |_| ()).unwrap();
+            let sub_res = cellulite.in_shape(&rtxn, &nimes, &mut |_| ()).unwrap();
             assert_eq!(result.len(), sub_res.len());
         }
         println!(
@@ -231,9 +229,9 @@ fn main() {
 
         let repeat = 100;
         let gard = gard();
-        let result = writer.in_shape(&rtxn, &gard, &mut |_| ()).unwrap();
+        let result = cellulite.in_shape(&rtxn, &gard, &mut |_| ()).unwrap();
         for _ in 0..repeat {
-            let sub_res = writer.in_shape(&rtxn, &gard, &mut |_| ()).unwrap();
+            let sub_res = cellulite.in_shape(&rtxn, &gard, &mut |_| ()).unwrap();
             assert_eq!(result.len(), sub_res.len());
         }
         println!(
@@ -244,9 +242,9 @@ fn main() {
 
         let repeat = 100;
         let occitanie = occitanie();
-        let result = writer.in_shape(&rtxn, &occitanie, &mut |_| ()).unwrap();
+        let result = cellulite.in_shape(&rtxn, &occitanie, &mut |_| ()).unwrap();
         for _ in 0..repeat {
-            let sub_res = writer.in_shape(&rtxn, &occitanie, &mut |_| ()).unwrap();
+            let sub_res = cellulite.in_shape(&rtxn, &occitanie, &mut |_| ()).unwrap();
             assert_eq!(result.len(), sub_res.len());
         }
         println!(
