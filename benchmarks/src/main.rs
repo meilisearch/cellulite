@@ -8,12 +8,13 @@ use heed::{
     EnvOpenOptions,
     types::{Bytes, Str},
 };
-use steppe::default::DefaultProgress;
 use roaring::RoaringBitmap;
+use steppe::default::DefaultProgress;
 use tempfile::TempDir;
 
 mod france_arrondissements;
 mod france_cadastre_addresses;
+mod france_cadastre_parcelles;
 mod france_cantons;
 mod france_communes;
 mod france_departements;
@@ -21,7 +22,6 @@ mod france_query_zones;
 mod france_regions;
 mod france_shops;
 mod france_zones;
-mod france_cadastre_parcelles;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -33,9 +33,26 @@ struct Args {
     #[arg(long, value_delimiter = ',')]
     selector: Vec<String>,
 
-    /// Skip indexing if set. You must provide the path to a database
+    /// Skip indexing altogether and only benchmark the search requests. You must provide the path to a database
     #[arg(long, default_value_t = false)]
-    skip_indexing: bool,
+    no_indexing: bool,
+
+    /// Skip inserting the items, can be useful if you already inserted the items with skip_build and only want to benchmark the build process.
+    #[arg(long, default_value_t = false, conflicts_with = "no_indexing")]
+    no_insert: bool,
+
+    /// Don't build the index after inserting the items.
+    #[arg(long, default_value_t = false, conflicts_with = "no_indexing")]
+    no_build: bool,
+
+    /// Don't commit after the operation, can be useful to benchmark only the build part of the indexing process
+    /// without having to make the insertion again.
+    #[arg(long, default_value_t = false, conflicts_with = "no_indexing")]
+    no_commit: bool,
+
+    /// Skip query if set
+    #[arg(long, default_value_t = false)]
+    no_queries: bool,
 
     /// Index metadata if set. Only valid if skip_indexing is false.
     /// This will create a new database for the metadata which will
@@ -45,10 +62,6 @@ struct Args {
     /// of the whole dataset in memory.
     #[arg(long, default_value_t = false, conflicts_with = "skip_indexing")]
     index_metadata: bool,
-
-    /// Skip query if set
-    #[arg(long, default_value_t = false)]
-    skip_queries: bool,
 
     /// Set the number of items to index, will be capped at the number of items in the dataset
     #[arg(long)]
@@ -87,9 +100,8 @@ fn main() {
         Dataset::CadastreAddr => {
             &mut france_cadastre_addresses::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
         }
-        Dataset::CadastreParcelle => {
-            &mut france_cadastre_parcelles::parse(args.selector) as &mut dyn Iterator<Item = (String, GeoJson)>
-        }
+        Dataset::CadastreParcelle => &mut france_cadastre_parcelles::parse(args.selector)
+            as &mut dyn Iterator<Item = (String, GeoJson)>,
         Dataset::Canton => {
             &mut france_cantons::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
         }
@@ -134,46 +146,48 @@ fn main() {
     let cellulite = Cellulite::create_from_env(&env, &mut wtxn).unwrap();
     let metadata: heed::Database<Str, Bytes> =
         env.create_database(&mut wtxn, Some("metadata")).unwrap();
-    wtxn.commit().unwrap();
 
-    if !args.skip_indexing {
+    if !args.no_indexing {
         let mut metadata_builder: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
 
-        println!("Inserting points");
-        let time = std::time::Instant::now();
-        let mut cpt = 0;
-        let mut prev_cpt = 0;
-        let mut wtxn = env.write_txn().unwrap();
+        if !args.no_insert {
+            println!("Inserting points");
+            let time = std::time::Instant::now();
+            let mut cpt = 0;
+            let mut prev_cpt = 0;
 
-        let mut print_timer = time;
-        for (name, geometry) in input {
-            cpt += 1;
-            let elapsed_since_last_print = print_timer.elapsed();
-            if elapsed_since_last_print > Duration::from_secs(10) {
-                let elapsed = time.elapsed();
-                println!(
-                    "Inserted {prev_cpt} additional points in {elapsed_since_last_print:.2?}, throughput: {} points / seconds || In total: {cpt} points, started {:.2?} ago, throughput: {} points / seconds",
-                    prev_cpt as f32 / elapsed_since_last_print.as_secs_f32(),
-                    time.elapsed(),
-                    cpt as f32 / elapsed.as_secs_f32()
-                );
-                print_timer = std::time::Instant::now();
-                prev_cpt = cpt;
+            let mut print_timer = time;
+            for (name, geometry) in input {
+                cpt += 1;
+                let elapsed_since_last_print = print_timer.elapsed();
+                if elapsed_since_last_print > Duration::from_secs(10) {
+                    let elapsed = time.elapsed();
+                    println!(
+                        "Inserted {prev_cpt} additional points in {elapsed_since_last_print:.2?}, throughput: {} points / seconds || In total: {cpt} points, started {:.2?} ago, throughput: {} points / seconds",
+                        prev_cpt as f32 / elapsed_since_last_print.as_secs_f32(),
+                        time.elapsed(),
+                        cpt as f32 / elapsed.as_secs_f32()
+                    );
+                    print_timer = std::time::Instant::now();
+                    prev_cpt = cpt;
+                }
+                cellulite.add(&mut wtxn, cpt, &geometry).unwrap();
+                if args.index_metadata {
+                    metadata_builder.entry(name).or_default().insert(cpt);
+                }
             }
-            cellulite.add(&mut wtxn, cpt, &geometry).unwrap();
-            if args.index_metadata {
-                metadata_builder.entry(name).or_default().insert(cpt);
-            }
+            println!("Inserted {cpt} points in {:.2?}", time.elapsed());
         }
-        println!("Inserted {cpt} points in {:.2?}", time.elapsed());
-        println!("Building the index...");
-        let progress = DefaultProgress::default();
-        progress.follow_progression_on_tty();
-        cellulite.build(&mut wtxn, &progress).unwrap();
-        progress.finish();
+        if !args.no_build {
+            println!("Building the index...");
+            let progress = DefaultProgress::default();
+            progress.follow_progression_on_tty();
+            cellulite.build(&mut wtxn, &progress).unwrap();
+            progress.finish();
 
-        println!("Index built in {:?}", time.elapsed());
-        println!("Progress: {:#?}", progress.accumulated_durations());
+            println!("Index built in {:?}", time.elapsed());
+            println!("Progress: {:#?}", progress.accumulated_durations());
+        }
 
         // If the metadata should be indexed, we must build an fst containing
         // all the names.
@@ -189,14 +203,12 @@ fn main() {
             let fst = fst_builder.into_inner().unwrap();
             metadata.put(&mut wtxn, &"fst", &fst).unwrap();
         }
-        wtxn.commit().unwrap();
-
-        let elapsed = time.elapsed();
-        println!("Inserted {cpt} points in {elapsed:?}.");
-        println!("One point every {:?}", elapsed / cpt);
+        if !args.no_commit {
+            wtxn.commit().unwrap();
+        }
     }
 
-    if !args.skip_queries {
+    if !args.no_queries {
         let repeat = 1000;
 
         let rtxn = env.read_txn().unwrap();
