@@ -624,10 +624,14 @@ impl Cellulite {
         let mut ret = RoaringBitmap::new();
         let mut double_check = RoaringBitmap::new();
         let mut to_explore: VecDeque<_> = tiler.into_coverage().collect();
-        let mut already_explored: HashSet<CellIndex> = to_explore.iter().copied().collect();
+        let mut already_explored: HashSet<CellIndex> = HashSet::with_capacity(to_explore.len());
         let mut too_large = false;
 
         while let Some(cell) = to_explore.pop_front() {
+            if !already_explored.insert(cell) {
+                continue;
+            }
+
             let Some(items) = self.cell_db().get(rtxn, &Key::Cell(cell))? else {
                 (inspector)((FilteringStep::NotPresentInDB, cell));
                 continue;
@@ -660,7 +664,7 @@ impl Cellulite {
                     let mut cell_number = 0;
 
                     for cell in tiler.into_coverage() {
-                        if already_explored.insert(cell) {
+                        if !already_explored.contains(&cell) {
                             to_explore.push_back(cell);
                         }
                         cell_number += 1;
