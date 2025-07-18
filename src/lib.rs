@@ -1,34 +1,36 @@
-use std::{collections::{BTreeMap, HashMap, HashSet, VecDeque}, sync::atomic::Ordering};
+use std::{borrow::Cow, collections::{BTreeMap, HashMap, HashSet, VecDeque}, sync::atomic::Ordering};
 
 use ::roaring::RoaringBitmap;
 use geo::{BooleanOps, Contains, Coord, Geometry, HasDimensions, Intersects, MultiPolygon};
 use geo_types::Polygon;
 use geojson::GeoJson;
 use h3o::{
-    error::{InvalidGeometry, InvalidLatLng},
     geom::{ContainmentMode, TilerBuilder},
     CellIndex, LatLng, Resolution,
 };
 use heed::{
-    types::{SerdeJson, Unit},
-    RoTxn, RwTxn, Unspecified,
+    byteorder::BE, types::{SerdeJson, U32}, Env, RoTxn, RwTxn, Unspecified
 };
 use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 use steppe::Progress;
 
+mod error;
 mod keys;
 pub mod roaring;
 #[cfg(test)]
 mod test;
 
+pub use crate::error::Error;
 use crate::roaring::RoaringBitmapCodec;
 
-pub type Database = heed::Database<KeyCodec, Unspecified>;
+pub type MainDb = heed::Database<KeyCodec, Unspecified>;
+pub type UpdateDb = heed::Database<U32<BE>, UpdateType>;
 pub type ItemId = u32;
 
 steppe::make_enum_progress! {
     pub enum BuildSteps {
-        RetrieveAndClearInsertedItems,
+        RetrieveUpdatedItems,
+        ClearUpdatedItems,
         RetrieveAndClearDeletedItems,
         RemoveDeletedItemsFromDatabase,
         InsertItemsAtLevelZero,
@@ -38,48 +40,55 @@ steppe::make_enum_progress! {
 steppe::make_atomic_progress!(Item alias AtomicItemStep => "item");
 steppe::make_atomic_progress!(Cell alias AtomicCellStep => "cell");
 
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    // User errors
-    #[error("Document with id `{0}` contains a {1} but only `Geometry` type is supported")]
-    InvalidGeoJsonTypeFormat(ItemId, &'static str),
-    #[error("Document with id `{0}` contains a {1} but only `Point`, `Polygon`, `MultiPoint` and `MultiPolygon` types are supported")]
-    InvalidGeometryTypeFormat(ItemId, &'static str),
-
-    // External errors, sometimes it's a user error and sometimes it's not
-    #[error(transparent)]
-    Heed(#[from] heed::Error),
-    #[error(transparent)]
-    InvalidLatLng(#[from] InvalidLatLng),
-    #[error(transparent)]
-    InvalidGeometry(#[from] InvalidGeometry),
-    #[error(transparent)]
-    InvalidGeoJson(#[from] geojson::Error),
-
-    // Internal errors
-    #[error("Internal error: unexpected document id `{0}` missing at `{1}`")]
-    InternalDocIdMissing(ItemId, String),
-}
-
-macro_rules! pos {
-    () => {
-        format!("{}:{}:{}", file!(), line!(), column!())
-    };
-}
-
 type Result<O, E = Error> = std::result::Result<O, E>;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum UpdateType {
+    Insert = 0,
+    Delete = 1,
+}
+
+impl<'a> heed::BytesEncode<'a> for UpdateType {
+    type EItem = Self;
+
+    fn bytes_encode(item: &Self::EItem) -> Result<Cow<'a, [u8]>, heed::BoxedError> {
+        Ok(Cow::Owned(vec![*item as u8]))
+    }
+}
+
+impl<'a> heed::BytesDecode<'a> for UpdateType {
+    type DItem = Self;
+
+    fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, heed::BoxedError> {
+        match bytes {
+            [b] if *b == UpdateType::Insert as u8 => Ok(UpdateType::Insert),
+            [b] if *b == UpdateType::Delete as u8 => Ok(UpdateType::Delete),
+            _ => panic!("Invalid update type {:?}", bytes),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Cellulite {
-    pub(crate) db: Database,
+    pub(crate) main: MainDb,
+    pub(crate) update: heed::Database<U32<BE>, UpdateType>,
     /// After how many elements should we break a cell into sub-cells
     pub threshold: u64,
 }
 
 impl Cellulite {
-    pub fn new(db: Database) -> Self {
-        Self { db, threshold: 200 }
+    pub const fn nb_dbs() -> u32 {
+        2
+    }
+
+    pub fn create_from_env(env: &Env, wtxn: &mut RwTxn) -> Result<Self> {
+        let main = env.create_database(wtxn, Some("cellulite-main"))?;
+        let update = env.create_database(wtxn, Some("cellulite-update"))?;
+        Ok(Self { main, update, threshold: 200 })
+    }
+
+    pub fn from_dbs(main: MainDb, update: UpdateDb) -> Self {
+        Self { main, update, threshold: 200 }
     }
 
     /// Return all the cells used internally in the database
@@ -88,7 +97,7 @@ impl Cellulite {
         rtxn: &'a RoTxn,
     ) -> Result<impl Iterator<Item = Result<(CellIndex, RoaringBitmap), heed::Error>> + 'a> {
         Ok(self
-            .db
+            .main
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter(rtxn, &KeyVariant::Cell)?
             .remap_types::<KeyCodec, RoaringBitmapCodec>()
@@ -106,7 +115,7 @@ impl Cellulite {
         rtxn: &'a RoTxn,
     ) -> Result<impl Iterator<Item = Result<(CellIndex, RoaringBitmap), heed::Error>> + 'a> {
         Ok(self
-            .db
+            .main
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter(rtxn, &KeyVariant::InnerShape)?
             .remap_types::<KeyCodec, RoaringBitmapCodec>()
@@ -133,7 +142,7 @@ impl Cellulite {
         rtxn: &'a RoTxn,
     ) -> Result<impl Iterator<Item = Result<(ItemId, GeoJson), heed::Error>> + 'a> {
         Ok(self
-            .db
+            .main
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter(rtxn, &KeyVariant::Item)?
             .remap_types::<KeyCodec, SerdeJson<GeoJson>>()
@@ -169,59 +178,36 @@ impl Cellulite {
     pub fn add(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
         self.validate_geojson(item, geo)?;
         self.item_db().put(wtxn, &Key::Item(item), geo)?;
-        self.updated_db().put(wtxn, &Key::Update(item), &())?;
-        self.deleted_db().delete(wtxn, &Key::Remove(item))?;
+        self.update.put(wtxn, &item, &UpdateType::Insert)?;
         Ok(())
     }
 
     pub fn delete(&self, wtxn: &mut RwTxn, item: ItemId) -> Result<()> {
-        self.deleted_db().put(wtxn, &Key::Remove(item), &())?;
-        self.updated_db().delete(wtxn, &Key::Update(item))?;
+        self.update.put(wtxn, &item, &UpdateType::Delete)?;
         Ok(())
     }
 
-    fn retrieve_and_clear_inserted_items(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<RoaringBitmap> {
-        progress.update(BuildSteps::RetrieveAndClearInsertedItems);
-        let mut bitmap = RoaringBitmap::new();
-        let mut iter = self
-            .db
-            .remap_types::<KeyPrefixVariantCodec, Unit>()
-            .prefix_iter_mut(wtxn, &KeyVariant::Update)?
-            .remap_types::<KeyCodec, Unit>();
-        while let Some(ret) = iter.next() {
-            let (Key::Update(item), ()) = ret? else {
-                unreachable!()
-            };
-            // safe because keys are ordered
-            bitmap.try_push(item).unwrap();
-            // safe because we own the ItemId
-            unsafe {
-                iter.del_current()?;
-            }
-        }
-        Ok(bitmap)
-    }
+    fn retrieve_and_clear_updated_items(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<(RoaringBitmap, RoaringBitmap)> {
+        progress.update(BuildSteps::RetrieveUpdatedItems);
+        let (atomic, step) = AtomicItemStep::new(self.update.len(wtxn)?);
+        progress.update(step);
 
-    fn retrieve_and_clear_deleted_items(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<RoaringBitmap> {
-        progress.update(BuildSteps::RetrieveAndClearDeletedItems);
-        let mut bitmap = RoaringBitmap::new();
-        let mut iter = self
-            .db
-            .remap_types::<KeyPrefixVariantCodec, Unit>()
-            .prefix_iter_mut(wtxn, &KeyVariant::Remove)?
-            .remap_types::<KeyCodec, Unit>();
+        let mut inserted = RoaringBitmap::new();
+        let mut deleted = RoaringBitmap::new();
+
+        let mut iter = self.update.iter(wtxn)?;
         while let Some(ret) = iter.next() {
-            let (Key::Remove(item), ()) = ret? else {
-                unreachable!()
-            };
-            // safe because keys are ordered
-            bitmap.try_push(item).unwrap();
-            // safe because we own the ItemId
-            unsafe {
-                iter.del_current()?;
+            match ret? {
+                (item, UpdateType::Insert) => inserted.try_push(item).unwrap(),
+                (item, UpdateType::Delete) => deleted.try_push(item).unwrap(),
             }
+            atomic.fetch_add(1, Ordering::Relaxed);
         }
-        Ok(bitmap)
+        drop(iter);
+        progress.update(BuildSteps::ClearUpdatedItems);
+        self.update.clear(wtxn)?;
+
+        Ok((inserted, deleted))
     }
 
     /// Indexing is in 4 steps:
@@ -233,8 +219,7 @@ impl Cellulite {
     ///    TODO: Could be parallelized fairly easily I think
     pub fn build(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<()> {
         // 1.
-        let inserted_items = self.retrieve_and_clear_inserted_items(wtxn, progress)?;
-        let removed_items = self.retrieve_and_clear_deleted_items(wtxn, progress)?;
+        let (inserted_items, removed_items) = self.retrieve_and_clear_updated_items(wtxn, progress)?;
 
         // 2.
         self.remove_deleted_items(wtxn, progress, removed_items)?;
@@ -584,23 +569,15 @@ impl Cellulite {
     }
 
     fn item_db(&self) -> heed::Database<KeyCodec, SerdeJson<GeoJson>> {
-        self.db.remap_data_type()
+        self.main.remap_data_type()
     }
 
     fn cell_db(&self) -> heed::Database<KeyCodec, RoaringBitmapCodec> {
-        self.db.remap_data_type()
+        self.main.remap_data_type()
     }
 
     fn inner_shape_cell_db(&self) -> heed::Database<KeyCodec, RoaringBitmapCodec> {
-        self.db.remap_data_type()
-    }
-
-    fn updated_db(&self) -> heed::Database<KeyCodec, Unit> {
-        self.db.remap_data_type()
-    }
-
-    fn deleted_db(&self) -> heed::Database<KeyCodec, Unit> {
-        self.db.remap_data_type()
+        self.main.remap_data_type()
     }
 
     // The strategy to retrieve the points in a shape is to:
