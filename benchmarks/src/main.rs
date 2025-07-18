@@ -158,25 +158,30 @@ fn main() {
 
             let mut print_timer = time;
             for (name, geometry) in input {
-                cpt += 1;
                 let elapsed_since_last_print = print_timer.elapsed();
-                if elapsed_since_last_print > Duration::from_secs(10) {
+                if elapsed_since_last_print > Duration::from_secs(1) {
                     let elapsed = time.elapsed();
+                    let additional_points = cpt - prev_cpt;
+                    if cpt > 0 {
+                        print!("\x1b[A\x1b[2K");
+                    }
                     println!(
-                        "Inserted {prev_cpt} additional points in {elapsed_since_last_print:.2?}, throughput: {} points / seconds || In total: {cpt} points, started {:.2?} ago, throughput: {} points / seconds",
-                        prev_cpt as f32 / elapsed_since_last_print.as_secs_f32(),
+                        "Inserted {additional_points} additional points in {elapsed_since_last_print:.2?}, throughput: {:.2} points / seconds || In total: {cpt} points, started {:.2?} ago, throughput: {:.2} points / seconds",
+                        additional_points as f32 / elapsed_since_last_print.as_secs_f32(),
                         time.elapsed(),
                         cpt as f32 / elapsed.as_secs_f32()
                     );
                     print_timer = std::time::Instant::now();
                     prev_cpt = cpt;
                 }
+                cpt += 1;
                 cellulite.add(&mut wtxn, cpt, &geometry).unwrap();
                 if args.index_metadata {
                     metadata_builder.entry(name).or_default().insert(cpt);
                 }
             }
-            println!("Inserted {cpt} points in {:.2?}", time.elapsed());
+            let duration = time.elapsed();
+            println!("Inserted {cpt} points in {duration:.2?}. Throughput: {:.2} points / seconds", cpt as f32 / duration.as_secs_f32());
         }
         if !args.no_build {
             println!("Building the index...");
