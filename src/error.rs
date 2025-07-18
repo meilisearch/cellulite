@@ -1,7 +1,6 @@
-use h3o::error::{InvalidLatLng, InvalidGeometry};
+use h3o::error::{InvalidGeometry, InvalidLatLng};
 
 use crate::ItemId;
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -32,4 +31,3 @@ macro_rules! pos {
         format!("{}:{}:{}", file!(), line!(), column!())
     };
 }
-

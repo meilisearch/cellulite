@@ -1,4 +1,8 @@
-use std::{borrow::Cow, collections::{BTreeMap, HashMap, HashSet, VecDeque}, sync::atomic::Ordering};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    sync::atomic::Ordering,
+};
 
 use ::roaring::RoaringBitmap;
 use geo::{BooleanOps, Contains, Coord, Geometry, HasDimensions, Intersects, MultiPolygon};
@@ -9,7 +13,9 @@ use h3o::{
     CellIndex, LatLng, Resolution,
 };
 use heed::{
-    byteorder::BE, types::{SerdeJson, U32}, Env, RoTxn, RwTxn, Unspecified
+    byteorder::BE,
+    types::{SerdeJson, U32},
+    Env, RoTxn, RwTxn, Unspecified,
 };
 use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 use steppe::Progress;
@@ -84,11 +90,19 @@ impl Cellulite {
     pub fn create_from_env(env: &Env, wtxn: &mut RwTxn) -> Result<Self> {
         let main = env.create_database(wtxn, Some("cellulite-main"))?;
         let update = env.create_database(wtxn, Some("cellulite-update"))?;
-        Ok(Self { main, update, threshold: 200 })
+        Ok(Self {
+            main,
+            update,
+            threshold: 200,
+        })
     }
 
     pub fn from_dbs(main: MainDb, update: UpdateDb) -> Self {
-        Self { main, update, threshold: 200 }
+        Self {
+            main,
+            update,
+            threshold: 200,
+        }
     }
 
     /// Return all the cells used internally in the database
@@ -187,7 +201,11 @@ impl Cellulite {
         Ok(())
     }
 
-    fn retrieve_and_clear_updated_items(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<(RoaringBitmap, RoaringBitmap)> {
+    fn retrieve_and_clear_updated_items(
+        &self,
+        wtxn: &mut RwTxn,
+        progress: &impl Progress,
+    ) -> Result<(RoaringBitmap, RoaringBitmap)> {
         progress.update(BuildSteps::RetrieveUpdatedItems);
         let (atomic, step) = AtomicItemStep::new(self.update.len(wtxn)?);
         progress.update(step);
@@ -219,7 +237,8 @@ impl Cellulite {
     ///    TODO: Could be parallelized fairly easily I think
     pub fn build(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<()> {
         // 1.
-        let (inserted_items, removed_items) = self.retrieve_and_clear_updated_items(wtxn, progress)?;
+        let (inserted_items, removed_items) =
+            self.retrieve_and_clear_updated_items(wtxn, progress)?;
 
         // 2.
         self.remove_deleted_items(wtxn, progress, removed_items)?;
@@ -262,7 +281,12 @@ impl Cellulite {
     /// 3. We do a scan of the whole inner_shape_cell_db and remove the items from the bitmaps
     ///
     /// TODO: We could optimize 2 and 3 by diving into the cells and stopping early when one is empty
-    fn remove_deleted_items(&self, wtxn: &mut RwTxn, progress: &impl Progress, items: RoaringBitmap) -> Result<()> {
+    fn remove_deleted_items(
+        &self,
+        wtxn: &mut RwTxn,
+        progress: &impl Progress,
+        items: RoaringBitmap,
+    ) -> Result<()> {
         progress.update(BuildSteps::RemoveDeletedItemsFromDatabase);
         steppe::make_enum_progress! {
             pub enum RemoveDeletedItemsSteps {
@@ -333,7 +357,12 @@ impl Cellulite {
         Ok(())
     }
 
-    fn insert_items_at_level_zero(&self, wtxn: &mut RwTxn, progress: &impl Progress, items: &RoaringBitmap) -> Result<()> {
+    fn insert_items_at_level_zero(
+        &self,
+        wtxn: &mut RwTxn,
+        progress: &impl Progress,
+        items: &RoaringBitmap,
+    ) -> Result<()> {
         progress.update(BuildSteps::InsertItemsAtLevelZero);
         steppe::make_enum_progress! {
             pub enum InsertItemsAtLevelZeroSteps {
