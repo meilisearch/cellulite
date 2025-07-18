@@ -17,7 +17,7 @@ use heed::{
     types::{Bytes, Str},
     Database, Env,
 };
-use steppe::DefaultProgress;
+use steppe::default::DefaultProgress;
 use roaring::RoaringBitmap;
 
 #[derive(Clone)]
@@ -284,18 +284,18 @@ impl Runner {
                     let now = std::time::Instant::now();
                     let matched = self
                         .db
-                        .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
+                        .in_shape(&wtxn, &polygon, &mut |_| ())
                         .unwrap();
                     let cold = now.elapsed();
                     self.db
-                        .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
+                        .in_shape(&wtxn, &polygon, &mut |_| ())
                         .unwrap();
                     self.db
                         .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
                         .unwrap();
                     let now = std::time::Instant::now();
                     self.db
-                        .in_shape(&wtxn, &polygon, &mut |step| steps.push(step))
+                        .in_shape(&wtxn, &polygon, &mut |_| ())
                         .unwrap();
                     let hot = now.elapsed();
 

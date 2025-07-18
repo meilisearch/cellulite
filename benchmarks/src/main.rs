@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf, sync::atomic::{AtomicBool, Ordering}, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
 use cellulite::{Cellulite, Database, roaring::RoaringBitmapCodec};
 use clap::{Parser, ValueEnum};
@@ -8,7 +8,7 @@ use heed::{
     EnvOpenOptions,
     types::{Bytes, Str},
 };
-use steppe::DefaultProgress;
+use steppe::default::DefaultProgress;
 use roaring::RoaringBitmap;
 use tempfile::TempDir;
 
@@ -29,6 +29,10 @@ struct Args {
     #[arg(short, long, value_enum, default_value_t = Dataset::Shop)]
     dataset: Dataset,
 
+    /// Selector to use for the dataset, will do something different for each dataset
+    #[arg(long, value_delimiter = ',')]
+    selector: Vec<String>,
+
     /// Skip indexing if set. You must provide the path to a database
     #[arg(long, default_value_t = false)]
     skip_indexing: bool,
@@ -48,9 +52,9 @@ struct Args {
 
     /// Set the number of items to index, will be capped at the number of items in the dataset
     #[arg(long)]
-    nb_items: Option<usize>,
+    limit: Option<usize>,
 
-    /// Skip query if set
+    /// Db path, if not provided, a temporary directory will be used and freed at the end of the benchmark
     #[arg(long)]
     db: Option<PathBuf>,
 }
@@ -61,6 +65,7 @@ enum Dataset {
     Shop,
     /// 22_000_000 points representing houses and buildings in France
     CadastreAddr,
+    /// With the selector you can chose a department in france with its number.
     CadastreParcelle,
     Canton,
     Arrondissement,
@@ -77,13 +82,13 @@ fn main() {
 
     println!("Starting...");
     let time = std::time::Instant::now();
-    let mut input = match args.dataset {
+    let input = match args.dataset {
         Dataset::Shop => &mut france_shops::parse() as &mut dyn Iterator<Item = (String, GeoJson)>,
         Dataset::CadastreAddr => {
             &mut france_cadastre_addresses::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
         }
         Dataset::CadastreParcelle => {
-            &mut france_cadastre_parcelles::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
+            &mut france_cadastre_parcelles::parse(args.selector) as &mut dyn Iterator<Item = (String, GeoJson)>
         }
         Dataset::Canton => {
             &mut france_cantons::parse() as &mut dyn Iterator<Item = (String, GeoJson)>
@@ -102,7 +107,7 @@ fn main() {
         }
         Dataset::Zone => &mut france_zones::parse() as &mut dyn Iterator<Item = (String, GeoJson)>,
     };
-    let input = input.take(args.nb_items.unwrap_or(usize::MAX));
+    let input = input.take(args.limit.unwrap_or(usize::MAX));
 
     println!("Deserialized the points in {:?}", time.elapsed());
 
@@ -164,23 +169,10 @@ fn main() {
         println!("Inserted {cpt} points in {:.2?}", time.elapsed());
         println!("Building the index...");
         let progress = DefaultProgress::default();
-        progress.as_progress_view();
-        let stop = AtomicBool::new(false);
-        let time = std::time::Instant::now();
+        progress.follow_progression_on_tty();
+        writer.build(&mut wtxn, &progress).unwrap();
+        progress.finish();
 
-        std::thread::scope(|s| {
-
-            s.spawn( || {
-                std::thread::sleep(Duration::from_secs(10));
-                while !stop.load(Ordering::Relaxed) {
-                    println!("Progress: {:#?}", progress.accumulated_durations());
-                    std::thread::sleep(Duration::from_secs(10));
-                }
-            });
-
-            writer.build(&mut wtxn, &progress).unwrap();
-            stop.store(true, Ordering::Relaxed);
-        });
         println!("Index built in {:?}", time.elapsed());
         println!("Progress: {:#?}", progress.accumulated_durations());
 

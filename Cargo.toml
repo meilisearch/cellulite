@@ -15,8 +15,8 @@ heed = "0.22.0"
 ordered-float = "5.0.0"
 roaring = "0.11.1"
 thiserror = "2.0.12"
-steppe = "0.3.0"
-# steppe = { path = "../steppe" }
+# steppe = "0.3.0"
+steppe = { path = "../steppe" }
 
 [dependencies]
 geo = { workspace = true }
