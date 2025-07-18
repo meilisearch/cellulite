@@ -7,7 +7,8 @@ use heed::{types::SerdeJson, Env, EnvOpenOptions, RoTxn, WithTls};
 use tempfile::TempDir;
 
 use crate::{
-    roaring::RoaringBitmapCodec, Cellulite, ItemId, Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant
+    roaring::RoaringBitmapCodec, Cellulite, ItemId, Key, KeyCodec, KeyPrefixVariantCodec,
+    KeyVariant,
 };
 
 pub struct DatabaseHandle {
