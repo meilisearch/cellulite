@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use egui::{epaint::PathStroke, Color32, Painter, Pos2, Ui, Vec2};
-use geo::{Contains, Intersects, Point, Rect};
+use geo::{Contains, Densify, Haversine, Intersects, Point, Rect};
 use geo_types::Coord;
 use h3o::CellIndex;
 use walkers::{Position, Projector};
@@ -27,8 +27,15 @@ impl AtomicF64 {
 }
 
 pub fn project_line_string(projector: &Projector, line: &[Coord]) -> Vec<Pos2> {
-    line.iter()
-        .map(|point| projector.project(Position::new(point.x, point.y)).to_pos2())
+    let mut line = geo::LineString::from(line.to_vec());
+    let line = Haversine.densify(&mut line, 1_000.0);
+    line.into_points()
+        .into_iter()
+        .map(|point| {
+            projector
+                .project(Position::new(point.x(), point.y()))
+                .to_pos2()
+        })
         .collect()
 }
 

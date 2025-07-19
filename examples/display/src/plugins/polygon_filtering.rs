@@ -6,6 +6,7 @@ use std::sync::{
 use cellulite::FilteringStep;
 use egui::{epaint::PathStroke, Color32, RichText, Ui, Vec2};
 use egui_double_slider::DoubleSlider;
+use geo::GeodesicArea;
 use geo_types::Coord;
 use h3o::Resolution;
 use walkers::{Plugin, Position};
@@ -76,16 +77,27 @@ impl PolygonFiltering {
                     self.runner.polygon_filter.lock().pop();
                 }
             }
+            let polygon = self.runner.polygon_filter.lock().clone();
+            let polygon = geo::geometry::Polygon::new(polygon.into(), vec![]);
+            display_polygon_stats(ui, &polygon);
             let stats = self.runner.filter_stats.lock();
             if let Some(stats) = stats.as_ref() {
                 ui.heading("Result");
-                ui.label(format!("Matched {} points", stats.nb_points_matched));
-                ui.label(format!(
-                    "Polygon contains {} points",
-                    stats.shape_contains_n_points
-                ));
-                ui.label(format!("[COLD] Processed in {:?}", stats.processed_in_cold));
-                ui.label(format!("[HOT] Processed in {:?}", stats.processed_in_hot));
+                ui.horizontal(|ui| {
+                    ui.label("Matched ");
+                    ui.strong(format!("{} items", stats.nb_points_matched));
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("[COLD]").strong().color(Color32::CYAN));
+                    ui.label(" Processed in ");
+                    ui.strong(format!("{:.2?}", stats.processed_in_cold));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("[HOT]").strong().color(Color32::LIGHT_RED));
+                    ui.label(" Processed in ");
+                    ui.strong(format!("{:.2?}", stats.processed_in_hot));
+                });
                 let mut display_filtering_details =
                     self.display_filtering_details.load(Ordering::Acquire);
                 ui.add(
@@ -241,4 +253,25 @@ impl Plugin for PolygonFiltering {
             }
         }
     }
+}
+
+fn display_polygon_stats(ui: &mut Ui, polygon: &geo::geometry::Polygon) {
+    let points = polygon.exterior().points().len();
+    let mut area = polygon.geodesic_area_signed().abs();
+    let area_unit = if area < 1000.0 * 1000.0 {
+        "m"
+    } else {
+        area /= 1000.0 * 1000.0;
+        "km"
+    };
+    let mut perimeter = polygon.geodesic_perimeter();
+    let perimeter_unit = if perimeter < 1000.0 { "m" } else { perimeter /= 1000.0; "km" };
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Polygon contains ");
+        ui.strong(format!("{points} points"));
+        ui.label(" for a total surface of ");
+        ui.strong(format!("{area:.2}{area_unit}²"));
+        ui.label(" and a perimeter of ");
+        ui.strong(format!("{perimeter:.2}{perimeter_unit}"));
+    });
 }
