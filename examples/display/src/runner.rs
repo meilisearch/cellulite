@@ -48,7 +48,6 @@ pub struct FilterStats {
     pub nb_points_matched: usize,
     pub processed_in_cold: Duration,
     pub processed_in_hot: Duration,
-    pub shape_contains_n_points: usize,
     pub cell_explored: Vec<(FilteringStep, CellIndex)>,
 }
 
@@ -279,8 +278,6 @@ impl Runner {
                 // if a point has been added OR the shape has been modified we must recompute the filter
                 let polygon = self.polygon_filter.lock().to_vec();
                 if polygon.len() >= 3 {
-                    let shape_contains_n_points = polygon.len();
-
                     let polygon = Polygon::new(LineString(polygon), Vec::new());
                     let mut steps = Vec::new();
                     let now = std::time::Instant::now();
@@ -298,7 +295,6 @@ impl Runner {
                         nb_points_matched: matched.len() as usize,
                         processed_in_cold: cold,
                         processed_in_hot: hot,
-                        shape_contains_n_points,
                         cell_explored: steps,
                     });
                     let mut points_matched = Vec::new();

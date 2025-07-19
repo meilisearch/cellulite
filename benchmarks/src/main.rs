@@ -181,7 +181,10 @@ fn main() {
                 }
             }
             let duration = time.elapsed();
-            println!("Inserted {cpt} points in {duration:.2?}. Throughput: {:.2} points / seconds", cpt as f32 / duration.as_secs_f32());
+            println!(
+                "Inserted {cpt} points in {duration:.2?}. Throughput: {:.2} points / seconds",
+                cpt as f32 / duration.as_secs_f32()
+            );
         }
         if !args.no_build {
             println!("Building the index...");

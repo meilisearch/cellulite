@@ -5,7 +5,7 @@ use std::{
 };
 
 use ::roaring::RoaringBitmap;
-use geo::{BooleanOps, Contains, Coord, Geometry, HasDimensions, Intersects, MultiPolygon};
+use geo::{BooleanOps, Contains, Coord, Densify, Geometry, HasDimensions, Haversine, Intersects, MultiPolygon};
 use geo_types::Polygon;
 use geojson::GeoJson;
 use h3o::{
@@ -622,6 +622,7 @@ impl Cellulite {
         polygon: &Polygon,
         inspector: &mut dyn FnMut((FilteringStep, CellIndex)),
     ) -> Result<RoaringBitmap> {
+        let polygon = Haversine.densify(polygon, 1_000.0);
         let mut tiler = TilerBuilder::new(Resolution::Zero)
             .containment_mode(ContainmentMode::Covers)
             .build();
