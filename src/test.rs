@@ -1,14 +1,13 @@
 use std::{fmt, ops::Deref};
 
-use geo::Geometry;
 use geojson::GeoJson;
 use h3o::LatLng;
-use heed::{types::SerdeJson, Env, EnvOpenOptions, RoTxn, WithTls};
+use heed::{Env, EnvOpenOptions, RoTxn, WithTls};
+use steppe::NoProgress;
 use tempfile::TempDir;
 
 use crate::{
-    roaring::RoaringBitmapCodec, Cellulite, ItemId, Key, KeyCodec, KeyPrefixVariantCodec,
-    KeyVariant,
+    roaring::RoaringBitmapCodec, zerometry::ZerometryCodec, Cellulite, ItemId, Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant
 };
 
 pub struct DatabaseHandle {
@@ -34,19 +33,14 @@ impl DatabaseHandle {
         let iter = self
             .database
             .main
-            .remap_types::<KeyPrefixVariantCodec, SerdeJson<GeoJson>>()
+            .remap_types::<KeyPrefixVariantCodec, ZerometryCodec>()
             .prefix_iter(rtxn, &KeyVariant::Item)
             .unwrap()
             .remap_key_type::<KeyCodec>();
         for ret in iter {
             let (key, value) = ret.unwrap();
             let Key::Item(item) = key else { unreachable!() };
-            let geom: Geometry<f64> = Geometry::try_from(value).unwrap();
-            let Geometry::Point(point) = geom else {
-                unreachable!()
-            };
-            let (lat, lng) = (point.y(), point.x());
-            s.push_str(&format!("{item}: ({lat:.4}, {lng:.4})\n"));
+            s.push_str(&format!("{item}: {value:?}\n"));
         }
 
         s.push_str("# Cells\n");
@@ -117,12 +111,19 @@ fn basic_write() {
     ])));
     db.add(&mut wtxn, 0, &point).unwrap();
 
-    insta::assert_snapshot!(db.snap(&wtxn), @r###"
-        # Items
-        0: (0.0000, 0.0000)
-        # Cells
-        Cell { res: 0, center: (2.3009, -5.2454) }: RoaringBitmap<[0]>
-        "###);
+    insta::assert_snapshot!(db.snap(&wtxn), @r"
+    # Items
+    0: Point(Zoint { lng: 0.0, lat: 0.0 })
+    # Cells
+    ");
+
+    db.build(&mut wtxn, &NoProgress).unwrap();
+    insta::assert_snapshot!(db.snap(&wtxn), @r"
+    # Items
+    0: Point(Zoint { lng: 0.0, lat: 0.0 })
+    # Cells
+    Cell { res: 0, center: (2.3009, -5.2454) }: RoaringBitmap<[0]>
+    ");
 
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 1.0,
@@ -135,35 +136,56 @@ fn basic_write() {
 
     insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Items
-    0: (0.0000, 0.0000)
-    1: (1.0000, 0.0000)
-    2: (2.0000, 0.0000)
+    0: Point(Zoint { lng: 0.0, lat: 0.0 })
+    1: Point(Zoint { lng: 0.0, lat: 1.0 })
+    2: Point(Zoint { lng: 0.0, lat: 2.0 })
+    # Cells
+    Cell { res: 0, center: (2.3009, -5.2454) }: RoaringBitmap<[0]>
+    ");
+
+    db.build(&mut wtxn, &NoProgress).unwrap();
+
+    insta::assert_snapshot!(db.snap(&wtxn), @r"
+    # Items
+    0: Point(Zoint { lng: 0.0, lat: 0.0 })
+    1: Point(Zoint { lng: 0.0, lat: 1.0 })
+    2: Point(Zoint { lng: 0.0, lat: 2.0 })
     # Cells
     Cell { res: 0, center: (2.3009, -5.2454) }: RoaringBitmap<[0, 1, 2]>
     Cell { res: 1, center: (2.0979, 0.4995) }: RoaringBitmap<[0, 1, 2]>
-    Cell { res: 2, center: (2.0979, 0.4995) }: RoaringBitmap<[1, 2]>
-    Cell { res: 2, center: (-0.4597, 0.5342) }: RoaringBitmap<[0]>
+    Cell { res: 2, center: (2.0979, 0.4995) }: RoaringBitmap<[0, 1, 2]>
+    Cell { res: 2, center: (-0.4597, 0.5342) }: RoaringBitmap<[0, 1, 2]>
+    Cell { res: 3, center: (2.1299, -0.3656) }: RoaringBitmap<[1, 2]>
+    Cell { res: 3, center: (1.2792, -0.0699) }: RoaringBitmap<[1, 2]>
+    Cell { res: 3, center: (-0.4051, -0.3419) }: RoaringBitmap<[0]>
+    Cell { res: 3, center: (0.4159, 0.2300) }: RoaringBitmap<[0]>
     ");
 
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 3.0,
     ])));
     db.add(&mut wtxn, 3, &point).unwrap();
+    db.build(&mut wtxn, &NoProgress).unwrap();
 
     insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Items
-    0: (0.0000, 0.0000)
-    1: (1.0000, 0.0000)
-    2: (2.0000, 0.0000)
-    3: (3.0000, 0.0000)
+    0: Point(Zoint { lng: 0.0, lat: 0.0 })
+    1: Point(Zoint { lng: 0.0, lat: 1.0 })
+    2: Point(Zoint { lng: 0.0, lat: 2.0 })
+    3: Point(Zoint { lng: 0.0, lat: 3.0 })
     # Cells
     Cell { res: 0, center: (2.3009, -5.2454) }: RoaringBitmap<[0, 1, 2, 3]>
     Cell { res: 1, center: (2.0979, 0.4995) }: RoaringBitmap<[0, 1, 2, 3]>
-    Cell { res: 2, center: (2.0979, 0.4995) }: RoaringBitmap<[1, 2, 3]>
-    Cell { res: 2, center: (-0.4597, 0.5342) }: RoaringBitmap<[0]>
-    Cell { res: 3, center: (2.1299, -0.3656) }: RoaringBitmap<[2]>
-    Cell { res: 3, center: (1.2792, -0.0699) }: RoaringBitmap<[1]>
-    Cell { res: 3, center: (2.9436, 0.1993) }: RoaringBitmap<[3]>
+    Cell { res: 2, center: (2.0979, 0.4995) }: RoaringBitmap<[0, 1, 2, 3]>
+    Cell { res: 2, center: (-0.4597, 0.5342) }: RoaringBitmap<[0, 1, 2, 3]>
+    Cell { res: 3, center: (2.1299, -0.3656) }: RoaringBitmap<[1, 2, 3]>
+    Cell { res: 3, center: (1.2792, -0.0699) }: RoaringBitmap<[1, 2, 3]>
+    Cell { res: 3, center: (2.9436, 0.1993) }: RoaringBitmap<[1, 2, 3]>
+    Cell { res: 3, center: (-0.4051, -0.3419) }: RoaringBitmap<[0]>
+    Cell { res: 3, center: (0.4159, 0.2300) }: RoaringBitmap<[0]>
+    Cell { res: 4, center: (1.9998, -0.0776) }: RoaringBitmap<[2]>
+    Cell { res: 4, center: (0.9168, -0.0660) }: RoaringBitmap<[1]>
+    Cell { res: 4, center: (3.0701, -0.0891) }: RoaringBitmap<[3]>
     ");
 }
 

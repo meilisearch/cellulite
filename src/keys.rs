@@ -9,24 +9,34 @@ impl<'a> heed::BytesEncode<'a> for KeyCodec {
     type EItem = Key;
 
     fn bytes_encode(key: &'a Self::EItem) -> Result<std::borrow::Cow<'a, [u8]>, heed::BoxedError> {
-        let mut ret;
+        const ALIGNMENT: usize = std::mem::size_of::<f64>();
+        let mut ret: Vec<u8>;
         match key {
             Key::Item(item) => {
-                ret = Vec::with_capacity(size_of::<KeyVariant>() + size_of_val(item));
+                let capacity = size_of::<KeyVariant>() + size_of_val(item);
+                let missing_to_align = ALIGNMENT - (capacity % ALIGNMENT);
+                ret = Vec::with_capacity(capacity + missing_to_align);
                 ret.push(KeyVariant::Item as u8);
                 ret.extend_from_slice(&item.to_be_bytes());
+                ret.extend(std::iter::repeat(0).take(missing_to_align));
             }
             Key::Cell(cell) => {
-                ret = Vec::with_capacity(size_of::<KeyVariant>() + size_of_val(cell));
+                let capacity = size_of::<KeyVariant>() + size_of_val(cell);
+                let missing_to_align = ALIGNMENT - (capacity % ALIGNMENT);
+                ret = Vec::with_capacity(capacity + missing_to_align);
                 ret.push(KeyVariant::Cell as u8);
                 let output: u64 = (*cell).into();
                 ret.extend_from_slice(&output.to_be_bytes());
+                ret.extend(std::iter::repeat(0).take(missing_to_align));
             }
             Key::InnerShape(cell) => {
-                ret = Vec::with_capacity(size_of::<KeyVariant>() + size_of_val(cell));
+                let capacity = size_of::<KeyVariant>() + size_of_val(cell);
+                let missing_to_align = ALIGNMENT - (capacity % ALIGNMENT);
+                ret = Vec::with_capacity(capacity + missing_to_align);
                 ret.push(KeyVariant::InnerShape as u8);
                 let output: u64 = (*cell).into();
                 ret.extend_from_slice(&output.to_be_bytes());
+                ret.extend(std::iter::repeat(0).take(missing_to_align));
             }
         }
         Ok(ret.into())
@@ -54,6 +64,7 @@ impl heed::BytesDecode<'_> for KeyCodec {
             }
             _ => unreachable!(),
         };
+        // In any case we can skip the padding
 
         Ok(key)
     }
