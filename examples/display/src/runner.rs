@@ -28,17 +28,17 @@ pub struct Runner {
     pub wake_up: Arc<synchronoise::SignalEvent>,
 
     // Communication input
-    pub to_insert: Arc<Mutex<Vec<(String, geojson::Value)>>>,
+    pub to_insert: Arc<Mutex<Vec<(String, GeoJson)>>>,
     pub polygon_filter: Arc<Mutex<Vec<Coord<f64>>>>,
 
     // Communication output
     pub stats: Arc<Mutex<Stats>>,
     pub filter_stats: Arc<Mutex<Option<FilterStats>>>,
-    pub points_matched: Arc<Mutex<Vec<geojson::Value>>>,
+    pub points_matched: Arc<Mutex<Vec<GeoJson>>>,
 
     // Current state of the DB
     last_id: Arc<AtomicU32>,
-    pub all_items: Arc<Mutex<HashMap<u32, geojson::Value>>>,
+    pub all_items: Arc<Mutex<HashMap<u32, GeoJson>>>,
     pub all_db_cells: Arc<Mutex<Vec<(CellIndex, RoaringBitmap)>>>,
     pub inner_shape_cell_db: Arc<Mutex<Vec<(CellIndex, RoaringBitmap)>>>,
     pub fst: Arc<Mutex<fst::Map<Vec<u8>>>>,
@@ -73,7 +73,7 @@ impl Runner {
         this
     }
 
-    pub fn add_shape(&self, name: String, value: geojson::Value) {
+    pub fn add_shape(&self, name: String, value: GeoJson) {
         // We still need to update all_items for visualization purposes
         self.to_insert.lock().push((name, value));
         self.wake_up.signal();
@@ -175,10 +175,7 @@ impl Runner {
             for entry in self.db.items(&rtxn).unwrap() {
                 let (id, geometry) = entry.unwrap();
                 last_id = last_id.max(id);
-                match geometry {
-                    GeoJson::Geometry(geometry) => all_points.insert(id, geometry.value),
-                    _ => todo!(),
-                };
+                all_points.insert(id, GeoJson::from(&geometry.to_geo()));
             }
             *self.all_items.lock() = all_points;
             self.last_id.store(last_id + 1, Ordering::Relaxed);
@@ -237,17 +234,7 @@ impl Runner {
                         }
                     }
                     self.all_items.lock().insert(id, shape.clone());
-                    self.db
-                        .add(
-                            &mut wtxn,
-                            id,
-                            &GeoJson::Geometry(geojson::Geometry {
-                                bbox: None,
-                                value: shape.clone(),
-                                foreign_members: None,
-                            }),
-                        )
-                        .unwrap();
+                    self.db.add(&mut wtxn, id, &shape).unwrap();
                 }
                 self.db
                     .build(&mut wtxn, &DefaultProgress::default())
@@ -300,11 +287,7 @@ impl Runner {
                     let mut points_matched = Vec::new();
                     for point in matched {
                         let point = self.db.item(&wtxn, point).unwrap().unwrap();
-                        let points = match point {
-                            GeoJson::Geometry(geometry) => geometry.value,
-                            _ => todo!(),
-                        };
-                        points_matched.push(points);
+                        points_matched.push(GeoJson::from(&point.to_geo()));
                     }
                     *self.points_matched.lock() = points_matched;
                 }

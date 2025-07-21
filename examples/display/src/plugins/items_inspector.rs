@@ -7,6 +7,7 @@ use fst::{
     Automaton, IntoStreamer, Streamer,
 };
 use geo::Intersects;
+use geojson::GeoJson;
 use h3o::{geom, CellIndex, Resolution};
 use std::ops::RangeInclusive;
 use walkers::{Plugin, Projector};
@@ -20,7 +21,7 @@ use crate::{
 pub struct ItemsInspector {
     pub query: String,
     pub runner: Runner,
-    pub selected: Option<(u32, String, geojson::Value, Vec<CellIndex>, Vec<CellIndex>)>,
+    pub selected: Option<(u32, String, GeoJson, Vec<CellIndex>, Vec<CellIndex>)>,
     pub resolution_range: RangeInclusive<Resolution>,
 }
 
@@ -148,12 +149,8 @@ impl ItemsInspector {
     }
 }
 
-fn display_geojson_as_codeblock(ui: &mut Ui, geometry: &geojson::Value) {
-    let geojson_obj = geojson::Geometry {
-        value: geometry.clone(),
-        bbox: None,
-        foreign_members: None,
-    };
+fn display_geojson_as_codeblock(ui: &mut Ui, geometry: &GeoJson) {
+    let geojson_obj = geometry.clone();
     let pretty_geometry = serde_json::to_string_pretty(&geojson_obj).unwrap();
     let geojson_url = format!(
         "http://geojson.io/#data=data:application/json,{}",

@@ -6,7 +6,7 @@ use std::sync::{
 use cellulite::FilteringStep;
 use egui::{epaint::PathStroke, Color32, RichText, Ui, Vec2};
 use egui_double_slider::DoubleSlider;
-use geo::GeodesicArea;
+use geo::{GeodesicArea, Geometry};
 use geo_types::Coord;
 use h3o::Resolution;
 use walkers::{Plugin, Position};
@@ -186,39 +186,37 @@ impl Plugin for PolygonFiltering {
         // If we have a polygon + it's finished we retrieve the points it contains and display them
         if to_display.len() >= 3 && !in_creation {
             for shape in self.runner.points_matched.lock().iter() {
-                match shape {
-                    geojson::Value::Point(coords) => {
-                        let pos = projector.project(Position::new(coords[0], coords[1]));
+                match Geometry::try_from(shape.clone()).unwrap() {
+                    Geometry::Point(coords) => {
+                        let pos = projector.project(Position::new(coords.x(), coords.y()));
                         draw_diagonal_cross(&painter, pos.to_pos2(), Color32::DARK_GREEN);
                     }
-                    geojson::Value::MultiPoint(coords) => {
+                    Geometry::MultiPoint(coords) => {
                         for coord in coords {
-                            let pos = projector.project(Position::new(coord[0], coord[1]));
+                            let pos = projector.project(Position::new(coord.x(), coord.y()));
                             draw_diagonal_cross(&painter, pos.to_pos2(), Color32::DARK_GREEN);
                         }
                     }
-                    geojson::Value::Polygon(coords) => {
-                        if let Some(exterior) = coords.first() {
-                            let points: Vec<_> = exterior
-                                .iter()
-                                .map(|coord| {
-                                    let pos = projector.project(Position::new(coord[0], coord[1]));
-                                    pos.to_pos2()
-                                })
-                                .collect();
-                            painter.line(points, PathStroke::new(4.0, Color32::DARK_GREEN));
-                        }
+                    Geometry::Polygon(coords) => {
+                        let exterior = coords.exterior();
+                        let points: Vec<_> = exterior
+                            .points()
+                            .map(|coord| {
+                                let pos = projector.project(Position::new(coord.x(), coord.y()));
+                                pos.to_pos2()
+                            })
+                            .collect();
+                        painter.line(points, PathStroke::new(4.0, Color32::DARK_GREEN));
                     }
-                    geojson::Value::MultiPolygon(coords) => {
+                    Geometry::MultiPolygon(coords) => {
                         for polygon in coords {
                             let points: Vec<_> = polygon
-                                .iter()
-                                .flat_map(|exterior| {
-                                    exterior.iter().map(|coord| {
-                                        let pos =
-                                            projector.project(Position::new(coord[0], coord[1]));
-                                        pos.to_pos2()
-                                    })
+                                .exterior()
+                                .points()
+                                .map(|coord| {
+                                    let pos =
+                                        projector.project(Position::new(coord.x(), coord.y()));
+                                    pos.to_pos2()
                                 })
                                 .collect();
                             painter.line(points, PathStroke::new(4.0, Color32::DARK_GREEN));
@@ -265,7 +263,12 @@ fn display_polygon_stats(ui: &mut Ui, polygon: &geo::geometry::Polygon) {
         "km"
     };
     let mut perimeter = polygon.geodesic_perimeter();
-    let perimeter_unit = if perimeter < 1000.0 { "m" } else { perimeter /= 1000.0; "km" };
+    let perimeter_unit = if perimeter < 1000.0 {
+        "m"
+    } else {
+        perimeter /= 1000.0;
+        "km"
+    };
     ui.horizontal_wrapped(|ui| {
         ui.label("Polygon contains ");
         ui.strong(format!("{points} points"));
