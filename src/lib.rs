@@ -504,7 +504,7 @@ impl Cellulite {
                 .cell_db()
                 .get(wtxn, &Key::Cell(cell))?
                 .unwrap_or_default();
-            let new_bitmap = &original_bitmap | &items;
+            let new_bitmap = &original_bitmap | &items_to_insert;
             self.cell_db().put(wtxn, &Key::Cell(cell), &new_bitmap)?;
             if original_bitmap.len() >= self.threshold {
                 // if we were already too large we can immediately jump to the next resolution
