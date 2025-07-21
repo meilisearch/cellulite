@@ -7,7 +7,8 @@ use steppe::NoProgress;
 use tempfile::TempDir;
 
 use crate::{
-    roaring::RoaringBitmapCodec, zerometry::ZerometryCodec, Cellulite, ItemId, Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant
+    roaring::RoaringBitmapCodec, zerometry::ZerometryCodec, Cellulite, ItemId, Key, KeyCodec,
+    KeyPrefixVariantCodec, KeyVariant,
 };
 
 pub struct DatabaseHandle {
