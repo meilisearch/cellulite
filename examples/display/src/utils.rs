@@ -47,20 +47,11 @@ pub fn display_cell(projector: &Projector, painter: &Painter, cell: CellIndex, c
     let line = project_line_string(projector, &cell_polygon.exterior().0);
 
     // Check if cell is at least 1 pixel in size by comparing projected points
-    if line.len() >= 2 {
-        let p1 = line[0];
-        let p2 = line[1];
-        let dx = p2.x - p1.x;
-        let dy = p2.y - p1.y;
-        let size = (dx * dx + dy * dy).sqrt();
 
-        if size >= 1.0 {
-            painter.line(
-                line,
-                PathStroke::new(16.0 - cell.resolution() as u8 as f32, color),
-            );
-        }
-    }
+    painter.line(
+        line,
+        PathStroke::new(16.0 - cell.resolution() as u8 as f32, color),
+    );
 }
 
 /// Draw a cross at the given center position with the specified size and color

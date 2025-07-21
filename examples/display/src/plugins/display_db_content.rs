@@ -3,7 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use egui::{Color32, Ui};
+use egui::{Color32, RichText, Ui};
 use egui_double_slider::DoubleSlider;
 use geo::{Contains, Intersects};
 use h3o::Resolution;
@@ -36,21 +36,33 @@ impl DisplayDbContent {
     }
 
     pub fn ui(&self, ui: &mut Ui) {
-        let mut display_items = self.display_items.load(Ordering::Relaxed);
-        if ui
-            .toggle_value(&mut display_items, "Display items")
-            .clicked()
-        {
-            self.display_items.store(display_items, Ordering::Relaxed);
-        }
+        ui.horizontal_wrapped(|ui| {
+            let nb_items = self.runner.all_items.lock().len();
+            let mut display_items = self.display_items.load(Ordering::Relaxed);
+            if ui
+                .toggle_value(&mut display_items, "Display items:")
+                .clicked()
+            {
+                self.display_items.store(display_items, Ordering::Relaxed);
+            }
+            ui.label(RichText::new(format!("{nb_items}")).strong().color(
+                Color32::WHITE.lerp_to_gamma(Color32::RED, 1.0_f32.min(nb_items as f32 / 100000.0)),
+            ));
+        });
         let mut display_db_cells = self.display_db_cells.load(Ordering::Relaxed);
-        if ui
-            .toggle_value(&mut display_db_cells, "Display DB cells")
-            .clicked()
-        {
-            self.display_db_cells
-                .store(display_db_cells, Ordering::Relaxed);
-        }
+        ui.horizontal_wrapped(|ui| {
+            let nb_cells = self.runner.all_db_cells.lock().len();
+            if ui
+                .toggle_value(&mut display_db_cells, "Display DB cells")
+                .clicked()
+            {
+                self.display_db_cells
+                    .store(display_db_cells, Ordering::Relaxed);
+            }
+            ui.label(RichText::new(format!("{nb_cells}")).strong().color(
+                Color32::WHITE.lerp_to_gamma(Color32::RED, 1.0_f32.min(nb_cells as f32 / 10000.0)),
+            ));
+        });
         if display_db_cells {
             let mut display_db_cells_min = self.display_db_cells_min_res.load(Ordering::Relaxed);
             let mut display_db_cells_max = self.display_db_cells_max_res.load(Ordering::Relaxed);
