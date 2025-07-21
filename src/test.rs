@@ -190,6 +190,34 @@ fn basic_write() {
     ");
 }
 
+#[test]
+fn bug_write_points_create_useless_cells() {
+    // This simple test was creating 5 cells instead of 3.
+    let mut db = create_database();
+    let mut wtxn = db.env.write_txn().unwrap();
+    db.database.threshold = 2;
+    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
+        -11.460678226504395,
+        48.213563161838714,
+    ])));
+    db.add(&mut wtxn, 0, &point).unwrap();
+    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
+        -1.520397001416467,
+        54.586501531522245,
+    ])));
+    db.add(&mut wtxn, 1, &point).unwrap();
+    db.build(&mut wtxn, &NoProgress).unwrap();
+    insta::assert_snapshot!(db.snap(&wtxn), @r"
+    # Items
+    0: Point(Zoint { lng: -11.460678226504395, lat: 48.213563161838714 })
+    1: Point(Zoint { lng: -1.520397001416467, lat: 54.586501531522245 })
+    # Cells
+    Cell { res: 0, center: (52.6758, -11.6016) }: RoaringBitmap<[0, 1]>
+    Cell { res: 1, center: (45.2992, -14.2485) }: RoaringBitmap<[0]>
+    Cell { res: 1, center: (53.6528, 0.2143) }: RoaringBitmap<[1]>
+    ");
+}
+
 /*
 #[test]
 fn basic_nearest() {
