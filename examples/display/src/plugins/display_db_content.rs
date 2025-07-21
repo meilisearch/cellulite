@@ -5,7 +5,7 @@ use std::sync::{
 
 use egui::{Color32, Ui};
 use egui_double_slider::DoubleSlider;
-use geo::Intersects;
+use geo::{Contains, Intersects};
 use h3o::Resolution;
 use walkers::Plugin;
 
@@ -90,7 +90,7 @@ impl Plugin for DisplayDbContent {
                     let cell_polygon = solvent.dissolve(Some(*cell)).unwrap();
                     let polygon = &cell_polygon.0[0];
 
-                    if polygon.intersects(&displayed_rect) {
+                    if polygon.intersects(&displayed_rect) || displayed_rect.contains(polygon) {
                         display_cell(
                             projector,
                             painter,

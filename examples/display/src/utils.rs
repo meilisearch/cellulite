@@ -1,8 +1,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use egui::{epaint::PathStroke, Color32, Painter, Pos2, Ui, Vec2};
-use geo::{Contains, Densify, Haversine, Intersects, Point, Rect};
+use geo::{Contains, Densify, Geometry, Haversine, Intersects, Point, Rect};
 use geo_types::Coord;
+use geojson::GeoJson;
 use h3o::CellIndex;
 use walkers::{Position, Projector};
 
@@ -102,20 +103,20 @@ pub fn draw_geometry_on_map(
     projector: &walkers::Projector,
     displayed_rect: Rect,
     painter: &egui::Painter,
-    value: &geojson::Value,
+    value: &GeoJson,
 ) {
-    match value {
-        geojson::Value::Point(coords) => {
-            let coord = h3o::LatLng::new(coords[1], coords[0]).unwrap();
+    match Geometry::try_from(value.clone()).unwrap() {
+        Geometry::Point(coords) => {
+            let coord = h3o::LatLng::new(coords.y(), coords.x()).unwrap();
             if !displayed_rect.contains(&Point::new(coord.lng(), coord.lat())) {
                 return;
             }
             let center = projector.project(Position::new(coord.lng(), coord.lat()));
             draw_orthogonal_cross(&painter, center.to_pos2(), Color32::BLACK);
         }
-        geojson::Value::MultiPoint(coords) => {
+        Geometry::MultiPoint(coords) => {
             for coord in coords {
-                let coord = h3o::LatLng::new(coord[1], coord[0]).unwrap();
+                let coord = h3o::LatLng::new(coord.y(), coord.x()).unwrap();
                 if !displayed_rect.contains(&Point::new(coord.lng(), coord.lat())) {
                     continue;
                 }
@@ -123,8 +124,8 @@ pub fn draw_geometry_on_map(
                 draw_orthogonal_cross(&painter, center.to_pos2(), Color32::BLACK);
             }
         }
-        geojson::Value::Polygon(coords) => {
-            let polygon: geo::Polygon = geojson::Value::Polygon(coords.clone()).try_into().unwrap();
+        Geometry::Polygon(coords) => {
+            let polygon: geo::Polygon = coords.clone().try_into().unwrap();
 
             if polygon.intersects(&displayed_rect) {
                 let points: Vec<_> = polygon
@@ -138,10 +139,19 @@ pub fn draw_geometry_on_map(
                 painter.line(points, PathStroke::new(4.0, Color32::BLACK));
             }
         }
-        geojson::Value::MultiPolygon(coords) => {
-            for polygon in coords {
-                let polygon = geojson::Value::Polygon(polygon.clone());
-                draw_geometry_on_map(projector, displayed_rect, painter, &polygon);
+        Geometry::MultiPolygon(polygons) => {
+            for polygon in polygons {
+                if polygon.intersects(&displayed_rect) {
+                    let points: Vec<_> = polygon
+                        .exterior()
+                        .points()
+                        .map(|point| {
+                            let pos = projector.project(Position::new(point.x(), point.y()));
+                            pos.to_pos2()
+                        })
+                        .collect();
+                    painter.line(points, PathStroke::new(4.0, Color32::BLACK));
+                }
             }
         }
         _ => todo!(),

@@ -5,29 +5,28 @@ use std::{
 };
 
 use ::roaring::RoaringBitmap;
-use geo::{BooleanOps, Contains, Coord, Densify, Geometry, HasDimensions, Haversine, Intersects, MultiPolygon};
+use ::zerometry::{Relation, RelationBetweenShapes, Zerometry};
+use geo::{Coord, Densify, Haversine, MultiPolygon};
 use geo_types::Polygon;
 use geojson::GeoJson;
 use h3o::{
     geom::{ContainmentMode, TilerBuilder},
     CellIndex, LatLng, Resolution,
 };
-use heed::{
-    byteorder::BE,
-    types::{SerdeJson, U32},
-    Env, RoTxn, RwTxn, Unspecified,
-};
+use heed::{byteorder::BE, types::U32, Env, RoTxn, RwTxn, Unspecified};
 use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 use steppe::Progress;
 
 mod error;
 mod keys;
 pub mod roaring;
+pub mod zerometry;
+
 #[cfg(test)]
 mod test;
 
 pub use crate::error::Error;
-use crate::roaring::RoaringBitmapCodec;
+use crate::{roaring::RoaringBitmapCodec, zerometry::ZerometryCodec};
 
 pub type MainDb = heed::Database<KeyCodec, Unspecified>;
 pub type UpdateDb = heed::Database<U32<BE>, UpdateType>;
@@ -77,7 +76,7 @@ impl<'a> heed::BytesDecode<'a> for UpdateType {
 #[derive(Clone)]
 pub struct Cellulite {
     pub(crate) main: MainDb,
-    pub(crate) update: heed::Database<U32<BE>, UpdateType>,
+    pub(crate) update: UpdateDb,
     /// After how many elements should we break a cell into sub-cells
     pub threshold: u64,
 }
@@ -87,13 +86,17 @@ impl Cellulite {
         2
     }
 
+    pub const fn default_threshold() -> u64 {
+        200
+    }
+
     pub fn create_from_env(env: &Env, wtxn: &mut RwTxn) -> Result<Self> {
         let main = env.create_database(wtxn, Some("cellulite-main"))?;
         let update = env.create_database(wtxn, Some("cellulite-update"))?;
         Ok(Self {
             main,
             update,
-            threshold: 200,
+            threshold: Self::default_threshold(),
         })
     }
 
@@ -101,7 +104,7 @@ impl Cellulite {
         Self {
             main,
             update,
-            threshold: 200,
+            threshold: Self::default_threshold(),
         }
     }
 
@@ -144,7 +147,7 @@ impl Cellulite {
     }
 
     /// Return the coordinates of the items rounded down to 50cm if this id exists in the DB. Returns `None` otherwise.
-    pub fn item(&self, rtxn: &RoTxn, item: ItemId) -> Result<Option<GeoJson>> {
+    pub fn item<'a>(&self, rtxn: &'a RoTxn, item: ItemId) -> Result<Option<Zerometry<'a>>> {
         self.item_db()
             .get(rtxn, &Key::Item(item))
             .map_err(Error::from)
@@ -154,12 +157,12 @@ impl Cellulite {
     pub fn items<'a>(
         &self,
         rtxn: &'a RoTxn,
-    ) -> Result<impl Iterator<Item = Result<(ItemId, GeoJson), heed::Error>> + 'a> {
+    ) -> Result<impl Iterator<Item = Result<(ItemId, Zerometry<'a>), heed::Error>> + 'a> {
         Ok(self
             .main
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter(rtxn, &KeyVariant::Item)?
-            .remap_types::<KeyCodec, SerdeJson<GeoJson>>()
+            .remap_types::<KeyCodec, ZerometryCodec>()
             .map(|res| {
                 res.map(|(key, cell)| {
                     let Key::Item(item) = key else { unreachable!() };
@@ -168,30 +171,9 @@ impl Cellulite {
             }))
     }
 
-    fn validate_geojson(&self, item: ItemId, geo: &GeoJson) -> Result<()> {
-        match geo {
-            GeoJson::Geometry(geometry) => match geometry.value {
-                geojson::Value::Point(_)
-                | geojson::Value::Polygon(_)
-                | geojson::Value::MultiPoint(_)
-                | geojson::Value::MultiPolygon(_) => Ok(()),
-                geojson::Value::LineString(_) | geojson::Value::MultiLineString(_) => {
-                    Err(Error::InvalidGeometryTypeFormat(item, "LineString"))
-                }
-                geojson::Value::GeometryCollection(_) => {
-                    Err(Error::InvalidGeometryTypeFormat(item, "GeometryCollection"))
-                }
-            },
-            GeoJson::Feature(_feature) => Err(Error::InvalidGeoJsonTypeFormat(item, "Feature")),
-            GeoJson::FeatureCollection(_feature_collection) => {
-                Err(Error::InvalidGeoJsonTypeFormat(item, "FeatureCollection"))
-            }
-        }
-    }
-
     pub fn add(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
-        self.validate_geojson(item, geo)?;
-        self.item_db().put(wtxn, &Key::Item(item), geo)?;
+        let geom = geo_types::Geometry::<f64>::try_from(geo.clone()).unwrap();
+        self.item_db().put(wtxn, &Key::Item(item), &geom)?;
         self.update.put(wtxn, &item, &UpdateType::Insert)?;
         Ok(())
     }
@@ -258,19 +240,7 @@ impl Cellulite {
             if bitmap.len() < self.threshold || bitmap.intersection_len(&inserted_items) == 0 {
                 continue;
             }
-            // TODO: Unbounded RAM consumption:
-            //   - We could push the items in a bumpalo and stops when we don't have enough space left
-            //   - Or use an LRU cache and re-fetch them from the database when needed (but it'll be slower imo)
-            let mut items = Vec::new();
-            for item in bitmap.iter() {
-                let geojson = self
-                    .item_db()
-                    .get(wtxn, &Key::Item(item))?
-                    .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
-                let shape = Geometry::try_from(geojson)?;
-                items.push((item, shape));
-            }
-            self.insert_chunk_of_items_recursively(wtxn, items, cell)?;
+            self.insert_chunk_of_items_recursively(wtxn, bitmap, cell)?;
         }
 
         Ok(())
@@ -374,16 +344,22 @@ impl Cellulite {
         progress.update(step);
         // level 0 only have 122 cells => that fits in RAM
         let mut to_insert = HashMap::with_capacity(122);
+        let mut belly_cells = HashMap::new();
         // TODO: Could be parallelized very easily, we just have to merge the hashmap at the end or use a shared map
         for item in items.iter() {
-            let geojson = self
+            let shape = self
                 .item_db()
                 .get(wtxn, &Key::Item(item))?
                 .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
-            let shape = Geometry::try_from(geojson)?;
-            let cells = self.explode_level_zero_geo(wtxn, item, shape)?;
+            let (cells, belly) = self.explode_level_zero_geo(wtxn, item, shape)?;
             for cell in cells {
                 to_insert
+                    .entry(cell)
+                    .or_insert_with(RoaringBitmap::new)
+                    .insert(item);
+            }
+            for cell in belly {
+                belly_cells
                     .entry(cell)
                     .or_insert_with(RoaringBitmap::new)
                     .insert(item);
@@ -407,72 +383,62 @@ impl Cellulite {
 
     fn explode_level_zero_geo(
         &self,
-        wtxn: &mut RwTxn,
+        rtxn: &RoTxn,
         item: ItemId,
-        shape: Geometry,
-    ) -> Result<Vec<CellIndex>, Error> {
+        shape: Zerometry,
+    ) -> Result<(Vec<CellIndex>, Vec<CellIndex>), Error> {
         match shape {
-            Geometry::Point(point) => {
-                let cell = LatLng::new(point.y(), point.x())
+            Zerometry::Point(point) => {
+                let cell = LatLng::new(point.lat(), point.lng())
                     .unwrap()
                     .to_cell(Resolution::Zero);
-                Ok(vec![cell])
+                Ok((vec![cell], vec![]))
             }
-            Geometry::MultiPoint(multi_point) => Ok(multi_point
-                .0
-                .iter()
-                .map(|point| {
-                    LatLng::new(point.y(), point.x())
-                        .unwrap()
-                        .to_cell(Resolution::Zero)
-                })
-                .collect()),
+            Zerometry::MultiPoints(multi_point) => {
+                let to_insert = multi_point
+                    .coords()
+                    .iter()
+                    .map(|point| {
+                        LatLng::new(point.lat(), point.lng())
+                            .unwrap()
+                            .to_cell(Resolution::Zero)
+                    })
+                    .collect();
+                Ok((to_insert, vec![]))
+            }
 
-            Geometry::Polygon(polygon) => {
+            Zerometry::Polygon(polygon) => {
                 let mut tiler = TilerBuilder::new(Resolution::Zero)
                     .containment_mode(ContainmentMode::Covers)
                     .build();
-                tiler.add(polygon.clone())?;
+                tiler.add(polygon.to_geo())?;
 
                 let mut to_insert = Vec::new();
+                let mut belly_cells = Vec::new();
                 for cell in tiler.into_coverage() {
                     // If the cell is entirely contained in the polygon, insert directly to inner_shape_cell_db
                     let solvent = h3o::geom::SolventBuilder::new().build();
                     let cell_polygon = solvent.dissolve(Some(cell)).unwrap();
+                    // We should use the MultiPolygon and be strict about the containment. All parts must be contained
                     let cell_polygon = &cell_polygon.0[0];
                     if polygon.contains(cell_polygon) {
-                        let mut bitmap = self
-                            .inner_shape_cell_db()
-                            .get(wtxn, &Key::InnerShape(cell))?
-                            .unwrap_or_default();
-                        bitmap.insert(item);
-                        self.inner_shape_cell_db()
-                            .put(wtxn, &Key::InnerShape(cell), &bitmap)?;
+                        belly_cells.push(cell);
                     } else {
                         // Otherwise use insert_shape_in_cell for partial overlaps
                         to_insert.push(cell);
                     }
                 }
-                Ok(to_insert)
+                Ok((to_insert, belly_cells))
             }
-            Geometry::MultiPolygon(multi_polygon) => {
+            Zerometry::MultiPolygon(multi_polygon) => {
                 let mut to_insert = Vec::new();
-                for polygon in multi_polygon.0.iter() {
-                    to_insert.extend(self.explode_level_zero_geo(
-                        wtxn,
-                        item,
-                        Geometry::Polygon(polygon.clone()),
-                    )?);
+                let mut belly_cells = Vec::new();
+                for polygon in multi_polygon.polygons() {
+                    let (cells, belly) = self.explode_level_zero_geo(rtxn, item, polygon.into())?;
+                    to_insert.extend(cells);
+                    belly_cells.extend(belly);
                 }
-                Ok(to_insert)
-            }
-            Geometry::Rect(_rect) => todo!(),
-            Geometry::Triangle(_triangle) => todo!(),
-
-            Geometry::GeometryCollection(_geometry_collection) => todo!(),
-
-            Geometry::Line(_) | Geometry::LineString(_) | Geometry::MultiLineString(_) => {
-                panic!("Doesn't support lines")
+                Ok((to_insert, belly_cells))
             }
         }
     }
@@ -485,10 +451,10 @@ impl Cellulite {
     ///  - If it was already too large, repeat the process with the next resolution
     ///  - If it **just became** too large. Retrieve all the items it contains and add them to the list of items to handle
     ///    Call ourselves recursively on the next resolution
-    fn insert_chunk_of_items_recursively(
+    fn insert_chunk_of_items_recursively<'a>(
         &self,
-        wtxn: &mut RwTxn,
-        items: Vec<(ItemId, Geometry)>,
+        wtxn: &'a mut RwTxn,
+        items: RoaringBitmap,
         cell: CellIndex,
     ) -> Result<()> {
         // 1. If we cannot increase the resolution, we are done
@@ -501,22 +467,23 @@ impl Cellulite {
 
         for &cell in children_cells.iter() {
             let cell_shape = get_cell_shape(cell);
-            for (item, shape) in items.iter() {
-                match shape_relation_with_cell(&shape, &cell_shape) {
-                    RelationToCell::ContainsCell => {
+            for item in items.iter() {
+                let shape = self
+                    .item_db()
+                    .get(wtxn, &Key::Item(item))?
+                    .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
+                match shape.relation(&cell_shape) {
+                    Relation::Contains => {
                         let entry = to_insert_in_belly
                             .entry(cell)
                             .or_insert_with(RoaringBitmap::new);
-                        entry.insert(*item);
+                        entry.insert(item);
                     }
-                    RelationToCell::IntersectsCell(shape) => {
-                        let entry = to_insert
-                            .entry(cell)
-                            .or_insert_with(|| (RoaringBitmap::new(), Vec::new()));
-                        entry.0.insert(*item);
-                        entry.1.push((*item, shape));
+                    Relation::Intersects | Relation::Contained => {
+                        let entry = to_insert.entry(cell).or_insert_with(RoaringBitmap::new);
+                        entry.insert(item);
                     }
-                    RelationToCell::NoRelation => (),
+                    Relation::Disjoint => (),
                 }
             }
         }
@@ -532,7 +499,7 @@ impl Cellulite {
                 .put(wtxn, &Key::Cell(cell), &bitmap)?;
         }
 
-        for (cell, (items, mut items_to_insert)) in to_insert {
+        for (cell, mut items_to_insert) in to_insert {
             let original_bitmap = self
                 .cell_db()
                 .get(wtxn, &Key::Cell(cell))?
@@ -548,19 +515,19 @@ impl Cellulite {
 
                 // If we just became too large, we have to retrieve the items that were already in the database insert them at the next resolution
                 for item_id in original_bitmap.iter() {
-                    let item = self
+                    let shape = self
                         .item_db()
                         .get(wtxn, &Key::Item(item_id))?
                         .ok_or_else(|| Error::InternalDocIdMissing(item_id, pos!()))?;
-                    let item = Geometry::try_from(item)?;
-                    match shape_relation_with_cell(&item, &cell_shape) {
-                        RelationToCell::ContainsCell => {
+
+                    match shape.relation(&cell_shape) {
+                        Relation::Contains => {
                             belly_items.insert(item_id);
                         }
-                        RelationToCell::IntersectsCell(shape) => {
-                            items_to_insert.push((item_id, shape));
+                        Relation::Intersects | Relation::Contained => {
+                            items_to_insert.insert(item_id);
                         }
-                        RelationToCell::NoRelation => (),
+                        Relation::Disjoint => (),
                     }
                 }
 
@@ -597,7 +564,7 @@ impl Cellulite {
         })
     }
 
-    fn item_db(&self) -> heed::Database<KeyCodec, SerdeJson<GeoJson>> {
+    fn item_db(&self) -> heed::Database<KeyCodec, ZerometryCodec> {
         self.main.remap_data_type()
     }
 
@@ -649,10 +616,10 @@ impl Cellulite {
 
             // let cell_polygon = bounding_box(cell);
             let cell_polygon = &cell_polygon.0[0];
-            if polygon.contains(cell_polygon) {
+            if geo::Contains::contains(&polygon, cell_polygon) {
                 (inspector)((FilteringStep::Returned, cell));
                 ret |= items;
-            } else if polygon.intersects(cell_polygon) {
+            } else if geo::Intersects::intersects(&polygon, cell_polygon) {
                 let resolution = cell.resolution();
                 if items.len() < self.threshold || resolution == Resolution::Fifteen {
                     (inspector)((FilteringStep::RequireDoubleCheck, cell));
@@ -691,47 +658,51 @@ impl Cellulite {
         double_check -= &ret;
 
         for item in double_check {
-            let geojson = self.item_db().get(rtxn, &Key::Item(item))?.unwrap();
-            match Geometry::try_from(geojson).unwrap() {
-                Geometry::Point(point) => {
-                    if polygon.contains(&Coord {
-                        x: point.x(),
-                        y: point.y(),
-                    }) {
-                        ret.insert(item);
-                    }
-                }
-                Geometry::MultiPoint(multi_point) => {
-                    if multi_point.0.iter().any(|point| {
-                        polygon.contains(&Coord {
+            let shape = self.item_db().get(rtxn, &Key::Item(item))?.unwrap();
+            match shape {
+                Zerometry::Point(point) => {
+                    if geo::Contains::contains(
+                        &polygon,
+                        &Coord {
                             x: point.x(),
                             y: point.y(),
-                        })
+                        },
+                    ) {
+                        ret.insert(item);
+                    }
+                }
+                Zerometry::MultiPoints(multi_point) => {
+                    if multi_point.coords().iter().any(|point| {
+                        geo::Contains::contains(
+                            &polygon,
+                            &Coord {
+                                x: point.x(),
+                                y: point.y(),
+                            },
+                        )
                     }) {
                         ret.insert(item);
                     }
                 }
 
-                Geometry::Polygon(poly) => {
+                Zerometry::Polygon(poly) => {
                     // If the polygon is contained or intersect with the query polygon, add it
-                    if polygon.contains(&poly) || polygon.intersects(&poly) {
-                        ret.insert(item);
-                    }
-                }
-                Geometry::MultiPolygon(multi_polygon) => {
-                    for poly in multi_polygon.0.iter() {
-                        if polygon.contains(poly) || polygon.intersects(poly) {
+                    match polygon.relation(&poly) {
+                        Relation::Contains | Relation::Intersects => {
                             ret.insert(item);
                         }
+                        _ => (),
                     }
                 }
-                Geometry::Rect(_rect) => todo!(),
-                Geometry::Triangle(_triangle) => todo!(),
-
-                Geometry::GeometryCollection(_geometry_collection) => todo!(),
-
-                Geometry::MultiLineString(_) | Geometry::Line(_) | Geometry::LineString(_) => {
-                    unreachable!("lines not supported")
+                Zerometry::MultiPolygon(multi_polygon) => {
+                    for poly in multi_polygon.polygons() {
+                        match polygon.relation(&poly) {
+                            Relation::Contains | Relation::Intersects => {
+                                ret.insert(item);
+                            }
+                            _ => (),
+                        }
+                    }
                 }
             }
         }
@@ -754,76 +725,6 @@ pub struct Stats {
     pub total_cells: usize,
     pub total_items: usize,
     pub cells_by_resolution: BTreeMap<Resolution, usize>,
-}
-
-enum RelationToCell {
-    ContainsCell,
-    IntersectsCell(Geometry),
-    NoRelation,
-}
-
-/// Compute the relation between a shape and a cell shape.
-/// It modifies the shape on the fly to keep the part that fits within the cell.
-fn shape_relation_with_cell(shape: &Geometry, cell_shape: &MultiPolygon) -> RelationToCell {
-    match shape {
-        Geometry::Point(point) => {
-            if cell_shape.contains(point) {
-                RelationToCell::IntersectsCell(Geometry::Point(*point))
-            } else {
-                RelationToCell::NoRelation
-            }
-        }
-        Geometry::MultiPoint(multi_point) => {
-            let mut ret = Vec::new();
-            for point in multi_point.iter() {
-                if cell_shape.contains(point) {
-                    ret.push(*point);
-                }
-            }
-            if ret.is_empty() {
-                RelationToCell::NoRelation
-            } else {
-                RelationToCell::IntersectsCell(Geometry::MultiPoint(ret.into()))
-            }
-        }
-        Geometry::Polygon(poly) => {
-            if poly.contains(cell_shape) {
-                RelationToCell::ContainsCell
-            } else {
-                let intersection = poly.intersection(cell_shape);
-                if intersection.is_empty() {
-                    RelationToCell::NoRelation
-                } else {
-                    RelationToCell::IntersectsCell(intersection.into())
-                }
-            }
-        }
-        Geometry::MultiPolygon(multi_polygon) => {
-            let mut ret = Vec::new();
-            for poly in multi_polygon.iter() {
-                if poly.contains(cell_shape) {
-                    return RelationToCell::ContainsCell;
-                }
-                let mut intersection = poly.intersection(cell_shape);
-                if !intersection.is_empty() {
-                    ret.append(&mut intersection.0);
-                }
-            }
-            if ret.is_empty() {
-                RelationToCell::NoRelation
-            } else {
-                RelationToCell::IntersectsCell(Geometry::MultiPolygon(ret.into()))
-            }
-        }
-        Geometry::Rect(rect) => shape_relation_with_cell(&rect.to_polygon().into(), cell_shape),
-        Geometry::Triangle(triangle) => {
-            shape_relation_with_cell(&triangle.to_polygon().into(), cell_shape)
-        }
-        Geometry::GeometryCollection(_geometry_collection) => todo!(),
-        Geometry::Line(_) | Geometry::LineString(_) | Geometry::MultiLineString(_) => {
-            unreachable!("lines not supported")
-        }
-    }
 }
 
 fn get_cell_shape(cell: CellIndex) -> MultiPolygon {

@@ -7,6 +7,7 @@ use std::sync::{
 use egui::Pos2;
 use egui::{mutex::Mutex, RichText, Ui, Vec2};
 use geo_types::{Coord, Point};
+use geojson::GeoJson;
 use walkers::Plugin;
 
 use crate::runner::Runner;
@@ -48,7 +49,11 @@ impl InsertIntoDatabase {
             let lng = rand::random_range(-180.0..=180.0);
             self.runner.add_shape(
                 self.insert_name.clone(),
-                geojson::Value::Point(vec![lng, lat]),
+                GeoJson::Geometry(geojson::Geometry {
+                    value: geojson::Value::Point(vec![lng, lat]),
+                    bbox: None,
+                    foreign_members: None,
+                }),
             );
         }
     }
@@ -85,7 +90,11 @@ impl InsertIntoDatabase {
                                 .collect();
                             self.runner.add_shape(
                                 self.insert_name.clone(),
-                                geojson::Value::MultiPoint(points),
+                                GeoJson::Geometry(geojson::Geometry {
+                                    value: geojson::Value::MultiPoint(points),
+                                    bbox: None,
+                                    foreign_members: None,
+                                }),
                             );
                         }
                         if ui.button("Clear points").clicked() {
@@ -106,7 +115,11 @@ impl InsertIntoDatabase {
                             polygon_points.push(polygon_points[0].clone());
                             self.runner.add_shape(
                                 self.insert_name.clone(),
-                                geojson::Value::Polygon(vec![polygon_points]),
+                                GeoJson::Geometry(geojson::Geometry {
+                                    value: geojson::Value::Polygon(vec![polygon_points]),
+                                    bbox: None,
+                                    foreign_members: None,
+                                }),
                             );
                             points.clear();
                         }
@@ -181,7 +194,11 @@ impl Plugin for InsertIntoDatabase {
                     let pos = projector.unproject(Vec2::new(pos.x, pos.y));
                     self.runner.add_shape(
                         self.insert_name.clone(),
-                        geojson::Value::Point(vec![pos.x(), pos.y()]),
+                        GeoJson::Geometry(geojson::Geometry {
+                            value: geojson::Value::Point(vec![pos.x(), pos.y()]),
+                            bbox: None,
+                            foreign_members: None,
+                        }),
                     );
                 }
                 InsertMode::MultiPoint => {
