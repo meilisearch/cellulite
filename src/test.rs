@@ -154,12 +154,8 @@ fn basic_write() {
     # Cells
     Cell { res: 0, center: (2.3009, -5.2454) }: RoaringBitmap<[0, 1, 2]>
     Cell { res: 1, center: (2.0979, 0.4995) }: RoaringBitmap<[0, 1, 2]>
-    Cell { res: 2, center: (2.0979, 0.4995) }: RoaringBitmap<[0, 1, 2]>
-    Cell { res: 2, center: (-0.4597, 0.5342) }: RoaringBitmap<[0, 1, 2]>
-    Cell { res: 3, center: (2.1299, -0.3656) }: RoaringBitmap<[1, 2]>
-    Cell { res: 3, center: (1.2792, -0.0699) }: RoaringBitmap<[1, 2]>
-    Cell { res: 3, center: (-0.4051, -0.3419) }: RoaringBitmap<[0]>
-    Cell { res: 3, center: (0.4159, 0.2300) }: RoaringBitmap<[0]>
+    Cell { res: 2, center: (2.0979, 0.4995) }: RoaringBitmap<[1, 2]>
+    Cell { res: 2, center: (-0.4597, 0.5342) }: RoaringBitmap<[0]>
     ");
 
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
@@ -177,22 +173,17 @@ fn basic_write() {
     # Cells
     Cell { res: 0, center: (2.3009, -5.2454) }: RoaringBitmap<[0, 1, 2, 3]>
     Cell { res: 1, center: (2.0979, 0.4995) }: RoaringBitmap<[0, 1, 2, 3]>
-    Cell { res: 2, center: (2.0979, 0.4995) }: RoaringBitmap<[0, 1, 2, 3]>
-    Cell { res: 2, center: (-0.4597, 0.5342) }: RoaringBitmap<[0, 1, 2, 3]>
-    Cell { res: 3, center: (2.1299, -0.3656) }: RoaringBitmap<[1, 2, 3]>
-    Cell { res: 3, center: (1.2792, -0.0699) }: RoaringBitmap<[1, 2, 3]>
-    Cell { res: 3, center: (2.9436, 0.1993) }: RoaringBitmap<[1, 2, 3]>
-    Cell { res: 3, center: (-0.4051, -0.3419) }: RoaringBitmap<[0]>
-    Cell { res: 3, center: (0.4159, 0.2300) }: RoaringBitmap<[0]>
-    Cell { res: 4, center: (1.9998, -0.0776) }: RoaringBitmap<[2]>
-    Cell { res: 4, center: (0.9168, -0.0660) }: RoaringBitmap<[1]>
-    Cell { res: 4, center: (3.0701, -0.0891) }: RoaringBitmap<[3]>
+    Cell { res: 2, center: (2.0979, 0.4995) }: RoaringBitmap<[1, 2, 3]>
+    Cell { res: 2, center: (-0.4597, 0.5342) }: RoaringBitmap<[0]>
+    Cell { res: 3, center: (2.1299, -0.3656) }: RoaringBitmap<[2]>
+    Cell { res: 3, center: (1.2792, -0.0699) }: RoaringBitmap<[1]>
+    Cell { res: 3, center: (2.9436, 0.1993) }: RoaringBitmap<[3]>
     ");
 }
 
 #[test]
-fn bug_write_points_create_useless_cells() {
-    // This simple test was creating 5 cells instead of 3.
+fn bug_write_points_create_cells_too_deep() {
+    // This simple test was creating 5 cells instead of 3 with two cells too deep for on reason.
     let mut db = create_database();
     let mut wtxn = db.env.write_txn().unwrap();
     db.database.threshold = 2;
@@ -215,6 +206,35 @@ fn bug_write_points_create_useless_cells() {
     Cell { res: 0, center: (52.6758, -11.6016) }: RoaringBitmap<[0, 1]>
     Cell { res: 1, center: (45.2992, -14.2485) }: RoaringBitmap<[0]>
     Cell { res: 1, center: (53.6528, 0.2143) }: RoaringBitmap<[1]>
+    ");
+}
+
+#[test]
+fn bug_write_points_create_unrelated_cells() {
+    // This simple test was creating 4 cells instead of 3 with two completely unrelated cells.
+    let mut db = create_database();
+    let mut wtxn = db.env.write_txn().unwrap();
+    db.database.threshold = 2;
+    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
+        6.0197316417968105,
+        49.63676497357687,
+    ])));
+    db.add(&mut wtxn, 0, &point).unwrap();
+    
+    let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
+        7.435508967561083,
+        43.76438119061842,
+    ])));
+    db.add(&mut wtxn, 1, &point).unwrap();
+    db.build(&mut wtxn, &NoProgress).unwrap();
+    insta::assert_snapshot!(db.snap(&wtxn), @r"
+    # Items
+    0: Point(Zoint { lng: 6.0197316417968105, lat: 49.63676497357687 })
+    1: Point(Zoint { lng: 7.435508967561083, lat: 43.76438119061842 })
+    # Cells
+    Cell { res: 0, center: (48.7583, 18.3030) }: RoaringBitmap<[0, 1]>
+    Cell { res: 1, center: (47.9847, 6.9179) }: RoaringBitmap<[0]>
+    Cell { res: 1, center: (40.9713, 2.8207) }: RoaringBitmap<[1]>
     ");
 }
 
