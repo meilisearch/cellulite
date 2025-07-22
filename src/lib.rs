@@ -6,7 +6,7 @@ use std::{
 
 use ::roaring::RoaringBitmap;
 use ::zerometry::{Relation, RelationBetweenShapes, Zerometry};
-use geo::{Coord, Densify, Haversine, MultiPolygon};
+use geo::{Densify, Haversine, MultiPolygon};
 use geo_types::Polygon;
 use geojson::GeoJson;
 use h3o::{
@@ -87,7 +87,7 @@ impl Cellulite {
     }
 
     pub const fn default_threshold() -> u64 {
-        2
+        200
     }
 
     pub fn create_from_env(env: &Env, wtxn: &mut RwTxn) -> Result<Self> {
@@ -659,51 +659,11 @@ impl Cellulite {
 
         for item in double_check {
             let shape = self.item_db().get(rtxn, &Key::Item(item))?.unwrap();
-            match shape {
-                Zerometry::Point(point) => {
-                    if geo::Contains::contains(
-                        &polygon,
-                        &Coord {
-                            x: point.x(),
-                            y: point.y(),
-                        },
-                    ) {
-                        ret.insert(item);
-                    }
+            match shape.relation(&polygon) {
+                Relation::Contains | Relation::Intersects | Relation::Contained => {
+                    ret.insert(item);
                 }
-                Zerometry::MultiPoints(multi_point) => {
-                    if multi_point.coords().iter().any(|point| {
-                        geo::Contains::contains(
-                            &polygon,
-                            &Coord {
-                                x: point.x(),
-                                y: point.y(),
-                            },
-                        )
-                    }) {
-                        ret.insert(item);
-                    }
-                }
-
-                Zerometry::Polygon(poly) => {
-                    // If the polygon is contained or intersect with the query polygon, add it
-                    match polygon.relation(&poly) {
-                        Relation::Contains | Relation::Intersects => {
-                            ret.insert(item);
-                        }
-                        _ => (),
-                    }
-                }
-                Zerometry::MultiPolygon(multi_polygon) => {
-                    for poly in multi_polygon.polygons() {
-                        match polygon.relation(&poly) {
-                            Relation::Contains | Relation::Intersects => {
-                                ret.insert(item);
-                            }
-                            _ => (),
-                        }
-                    }
-                }
+                Relation::Disjoint => (),
             }
         }
 
