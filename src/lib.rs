@@ -90,7 +90,7 @@ impl Cellulite {
         200
     }
 
-    pub fn create_from_env(env: &Env, wtxn: &mut RwTxn) -> Result<Self> {
+    pub fn create_from_env<Tls>(env: &Env<Tls>, wtxn: &mut RwTxn) -> Result<Self> {
         let main = env.create_database(wtxn, Some("cellulite-main"))?;
         let update = env.create_database(wtxn, Some("cellulite-update"))?;
         Ok(Self {
@@ -106,6 +106,12 @@ impl Cellulite {
             update,
             threshold: Self::default_threshold(),
         }
+    }
+
+    pub fn clear(&self, wtxn: &mut RwTxn) -> Result<()> {
+        self.main.clear(wtxn)?;
+        self.update.clear(wtxn)?;
+        Ok(())
     }
 
     /// Return all the cells used internally in the database
