@@ -1,6 +1,6 @@
 [package]
 name = "cellulite"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license-file = "LICENSE"
 description = "Store and retrieve geojson in a memory mapped database"
