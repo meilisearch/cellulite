@@ -13,7 +13,7 @@ use h3o::{
     geom::{ContainmentMode, TilerBuilder},
     CellIndex, LatLng, Resolution,
 };
-use heed::{byteorder::BE, types::U32, Env, RoTxn, RwTxn, Unspecified};
+use heed::{byteorder::BE, types::{Bytes, U32}, Env, RoTxn, RwTxn, Unspecified};
 use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 use steppe::Progress;
 
@@ -180,6 +180,13 @@ impl Cellulite {
     pub fn add(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
         let geom = geo_types::Geometry::<f64>::try_from(geo.clone()).unwrap();
         self.item_db().put(wtxn, &Key::Item(item), &geom)?;
+        self.update.put(wtxn, &item, &UpdateType::Insert)?;
+        Ok(())
+    }
+
+    /// The `geo` must be a valid zerometry otherwise the database will be corrupted.
+    pub fn add_raw_zerometry(&self, wtxn: &mut RwTxn, item: ItemId, geo: &[u8]) -> Result<()> {
+        self.item_db().remap_data_type::<Bytes>().put(wtxn, &Key::Item(item), &geo)?;
         self.update.put(wtxn, &item, &UpdateType::Insert)?;
         Ok(())
     }
