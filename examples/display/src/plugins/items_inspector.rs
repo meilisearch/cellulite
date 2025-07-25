@@ -22,6 +22,7 @@ pub struct ItemsInspector {
     pub query: String,
     pub runner: Runner,
     pub selected: Option<(u32, String, GeoJson, Vec<CellIndex>, Vec<CellIndex>)>,
+    pub search_result: Option<Vec<(String, u32)>>,
     pub resolution_range: RangeInclusive<Resolution>,
 }
 
@@ -31,6 +32,7 @@ impl ItemsInspector {
             query: String::new(),
             runner,
             selected: None,
+            search_result: Some(Vec::new()),
             resolution_range: Resolution::Zero..=Resolution::Fifteen,
         }
     }
@@ -67,13 +69,17 @@ impl ItemsInspector {
 
     pub fn ui(&mut self, ui: &mut Ui) {
         ui.collapsing(RichText::new("Inspect item").heading(), |ui| {
-            ui.text_edit_singleline(&mut self.query);
-            let result = self.search();
-            ui.label(format!("result: {:?}", result.len()));
+            if ui.text_edit_singleline(&mut self.query).changed() {
+                self.selected = None;
+                self.search_result = None;
+                self.search();
+            }
             ui.separator();
             if let Some((item, name, geometry, cells, inner_shape_cells)) = &self.selected {
                 let response = ui.selectable_label(true, format!("{}: {}", name, item));
-                display_geojson_as_codeblock(ui, geometry);
+                ui.collapsing(RichText::new("Geojson").heading(), |ui| {
+                    display_geojson_as_codeblock(ui, geometry);
+                });
                 ui.label(format!("Made of {} cells", cells.len()));
                 ui.label(format!(
                     "Made of {} inner shape cells",
@@ -98,10 +104,10 @@ impl ItemsInspector {
                 if response.clicked() {
                     self.selected = None;
                 }
-            } else {
+            } else if let Some(result) = self.search_result.as_ref() {
                 for (name, item) in result {
                     let response = ui.selectable_label(
-                        self.selected.as_ref().map(|(id, _, _, _, _)| *id) == Some(item),
+                        self.selected.as_ref().map(|(id, _, _, _, _)| *id) == Some(*item),
                         format!("{}: {}", name, item),
                     );
                     if response.clicked() {
@@ -112,7 +118,7 @@ impl ItemsInspector {
                             .all_db_cells
                             .lock()
                             .iter()
-                            .filter(|(_, bitmap)| bitmap.contains(item))
+                            .filter(|(_, bitmap)| bitmap.contains(*item))
                             .map(|(cell, _)| *cell)
                             .collect();
                         let inner_shape_cells = self
@@ -120,12 +126,14 @@ impl ItemsInspector {
                             .inner_shape_cell_db
                             .lock()
                             .iter()
-                            .filter(|(_, bitmap)| bitmap.contains(item))
+                            .filter(|(_, bitmap)| bitmap.contains(*item))
                             .map(|(cell, _)| *cell)
                             .collect();
-                        self.selected = Some((item, name, geometry, cells, inner_shape_cells));
+                        self.selected = Some((*item, name.clone(), geometry, cells, inner_shape_cells));
                     }
                 }
+            } else {
+                ui.spinner();
             }
         });
     }

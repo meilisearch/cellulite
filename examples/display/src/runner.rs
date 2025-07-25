@@ -208,6 +208,7 @@ impl Runner {
 
             loop {
                 self.wake_up.wait();
+                println!("wake_up");
                 let to_insert = std::mem::take(&mut *self.to_insert.lock());
                 let mut wtxn = self.env.write_txn().unwrap();
                 let current_fst = self.fst.lock().clone();
