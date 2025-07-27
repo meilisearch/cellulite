@@ -37,6 +37,7 @@ roaring = { workspace = true }
 thiserror = { workspace = true }
 steppe = { workspace = true }
 zerometry = { workspace = true }
+intmap = "3.1.2"
 
 [dev-dependencies]
 insta = "1.42.2"
