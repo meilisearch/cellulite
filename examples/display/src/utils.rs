@@ -28,8 +28,8 @@ impl AtomicF64 {
 }
 
 pub fn project_line_string(projector: &Projector, line: &[Coord]) -> Vec<Pos2> {
-    let mut line = geo::LineString::from(line.to_vec());
-    let line = Haversine.densify(&mut line, 1_000.0);
+    let line = geo::LineString::from(line.to_vec());
+    let line = Haversine.densify(&line, 1_000.0);
     line.into_points()
         .into_iter()
         .map(|point| {
@@ -89,7 +89,6 @@ pub fn draw_orthogonal_cross(painter: &Painter, point: Pos2, color: Color32) {
 }
 
 /// Draw geometrical shape on map
-
 pub fn draw_geometry_on_map(
     projector: &walkers::Projector,
     displayed_rect: Rect,
@@ -103,7 +102,7 @@ pub fn draw_geometry_on_map(
                 return;
             }
             let center = projector.project(Position::new(coord.lng(), coord.lat()));
-            draw_orthogonal_cross(&painter, center.to_pos2(), Color32::BLACK);
+            draw_orthogonal_cross(painter, center.to_pos2(), Color32::BLACK);
         }
         Geometry::MultiPoint(coords) => {
             for coord in coords {
@@ -112,11 +111,11 @@ pub fn draw_geometry_on_map(
                     continue;
                 }
                 let center = projector.project(Position::new(coord.lng(), coord.lat()));
-                draw_orthogonal_cross(&painter, center.to_pos2(), Color32::BLACK);
+                draw_orthogonal_cross(painter, center.to_pos2(), Color32::BLACK);
             }
         }
         Geometry::Polygon(coords) => {
-            let polygon: geo::Polygon = coords.clone().try_into().unwrap();
+            let polygon: geo::Polygon = coords.clone();
 
             if polygon.intersects(&displayed_rect) {
                 let points: Vec<_> = polygon

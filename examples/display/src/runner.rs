@@ -127,10 +127,10 @@ impl Runner {
                         .put(
                             wtxn,
                             &format!("bitmap_{last_bitmap_id:010}"),
-                            &builder_bitmap,
+                            builder_bitmap,
                         )
                         .unwrap();
-                    builder.insert(&builder_key, last_bitmap_id as u64).unwrap();
+                    builder.insert(builder_key, last_bitmap_id as u64).unwrap();
                     builder_next = fst_builder_iter.next();
                 }
                 std::cmp::Ordering::Equal => {
@@ -150,7 +150,7 @@ impl Runner {
             last_bitmap_id += 1;
             self.metadata
                 .remap_data_type::<RoaringBitmapCodec>()
-                .put(wtxn, &format!("bitmap_{last_bitmap_id:010}"), &bitmap)
+                .put(wtxn, &format!("bitmap_{last_bitmap_id:010}"), bitmap)
                 .unwrap();
             builder.insert(name, last_bitmap_id as u64).unwrap();
             builder_next = fst_builder_iter.next();
@@ -193,14 +193,11 @@ impl Runner {
                 let (cell, bitmap) = entry.unwrap();
                 inner_shape_db_cells.push((cell, bitmap));
             }
-            println!(
-                "inner_shape_db_cells_count: {:?}",
-                inner_shape_db_cells_count
-            );
+            println!("inner_shape_db_cells_count: {inner_shape_db_cells_count:?}");
             *self.inner_shape_cell_db.lock() = inner_shape_db_cells;
 
             if let Some(fst) = self.metadata.get(&rtxn, "fst").unwrap() {
-                if fst.len() > 0 {
+                if !fst.is_empty() {
                     *self.fst.lock() = Map::new(fst.to_vec()).unwrap();
                 }
             }
@@ -235,7 +232,7 @@ impl Runner {
                         }
                     }
                     self.all_items.lock().insert(id, shape.clone());
-                    self.db.add(&mut wtxn, id, &shape).unwrap();
+                    self.db.add(&mut wtxn, id, shape).unwrap();
                 }
                 self.db
                     .build(&mut wtxn, &DefaultProgress::default())

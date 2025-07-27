@@ -7,7 +7,9 @@ pub enum Error {
     // User errors
     #[error("Document with id `{0}` contains a {1} but only `Geometry` type is supported")]
     InvalidGeoJsonTypeFormat(ItemId, &'static str),
-    #[error("Document with id `{0}` contains a {1} but only `Point`, `Polygon`, `MultiPoint` and `MultiPolygon` types are supported")]
+    #[error(
+        "Document with id `{0}` contains a {1} but only `Point`, `Polygon`, `MultiPoint` and `MultiPolygon` types are supported"
+    )]
     InvalidGeometryTypeFormat(ItemId, &'static str),
 
     // External errors, sometimes it's a user error and sometimes it's not
@@ -18,7 +20,7 @@ pub enum Error {
     #[error(transparent)]
     InvalidGeometry(#[from] InvalidGeometry),
     #[error(transparent)]
-    InvalidGeoJson(#[from] geojson::Error),
+    InvalidGeoJson(#[from] Box<geojson::Error>),
 
     // Internal errors
     #[error("Internal error: unexpected document id `{0}` missing at `{1}`")]

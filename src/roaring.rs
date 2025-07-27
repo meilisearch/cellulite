@@ -21,7 +21,7 @@ impl heed::BytesEncode<'_> for RoaringBitmapCodec {
         let mut bytes = Vec::with_capacity(item.serialized_size());
         item.serialize_into(&mut bytes)?;
         let missing_to_align = ALIGNMENT - (bytes.len() % ALIGNMENT);
-        bytes.extend(std::iter::repeat(0).take(missing_to_align));
+        bytes.extend(std::iter::repeat_n(0, missing_to_align));
         Ok(Cow::Owned(bytes))
     }
 }

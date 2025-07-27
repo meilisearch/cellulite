@@ -57,7 +57,7 @@ impl App {
         wtxn.commit().unwrap();
         let db = cellulite;
 
-        let runner = Runner::new(env.clone(), db.clone(), metadata.clone());
+        let runner = Runner::new(env.clone(), db.clone(), metadata);
         let insert_into_database = plugins::InsertIntoDatabase::new(runner.clone());
         let polygon_filtering =
             plugins::PolygonFiltering::new(runner.clone(), insert_into_database.clone());
