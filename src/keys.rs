@@ -18,7 +18,7 @@ impl<'a> heed::BytesEncode<'a> for KeyCodec {
                 ret = Vec::with_capacity(capacity + missing_to_align);
                 ret.push(KeyVariant::Item as u8);
                 ret.extend_from_slice(&item.to_be_bytes());
-                ret.extend(std::iter::repeat(0).take(missing_to_align));
+                ret.extend(std::iter::repeat_n(0, missing_to_align));
             }
             Key::Cell(cell) => {
                 let capacity = size_of::<KeyVariant>() + size_of_val(cell);
@@ -27,7 +27,7 @@ impl<'a> heed::BytesEncode<'a> for KeyCodec {
                 ret.push(KeyVariant::Cell as u8);
                 let output: u64 = (*cell).into();
                 ret.extend_from_slice(&output.to_be_bytes());
-                ret.extend(std::iter::repeat(0).take(missing_to_align));
+                ret.extend(std::iter::repeat_n(0, missing_to_align));
             }
             Key::InnerShape(cell) => {
                 let capacity = size_of::<KeyVariant>() + size_of_val(cell);
@@ -36,7 +36,7 @@ impl<'a> heed::BytesEncode<'a> for KeyCodec {
                 ret.push(KeyVariant::InnerShape as u8);
                 let output: u64 = (*cell).into();
                 ret.extend_from_slice(&output.to_be_bytes());
-                ret.extend(std::iter::repeat(0).take(missing_to_align));
+                ret.extend(std::iter::repeat_n(0, missing_to_align));
             }
         }
         Ok(ret.into())

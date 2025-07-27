@@ -189,12 +189,12 @@ impl Plugin for PolygonFiltering {
                 match Geometry::try_from(shape.clone()).unwrap() {
                     Geometry::Point(coords) => {
                         let pos = projector.project(Position::new(coords.x(), coords.y()));
-                        draw_diagonal_cross(&painter, pos.to_pos2(), Color32::DARK_GREEN);
+                        draw_diagonal_cross(painter, pos.to_pos2(), Color32::DARK_GREEN);
                     }
                     Geometry::MultiPoint(coords) => {
                         for coord in coords {
                             let pos = projector.project(Position::new(coord.x(), coord.y()));
-                            draw_diagonal_cross(&painter, pos.to_pos2(), Color32::DARK_GREEN);
+                            draw_diagonal_cross(painter, pos.to_pos2(), Color32::DARK_GREEN);
                         }
                     }
                     Geometry::Polygon(coords) => {
