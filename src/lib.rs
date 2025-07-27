@@ -124,6 +124,18 @@ impl Cellulite {
         Ok(())
     }
 
+    fn item_db(&self) -> heed::Database<ItemKeyCodec, ZerometryCodec> {
+        self.item
+    }
+
+    fn cell_db(&self) -> heed::Database<CellKeyCodec, RoaringBitmapCodec> {
+        self.cell.remap_data_type()
+    }
+
+    fn inner_shape_cell_db(&self) -> heed::Database<CellKeyCodec, RoaringBitmapCodec> {
+        self.cell.remap_data_type()
+    }
+
     /// Return all the cells used internally in the database
     pub fn inner_db_cells<'a>(
         &self,
@@ -173,6 +185,11 @@ impl Cellulite {
         rtxn: &'a RoTxn,
     ) -> Result<impl Iterator<Item = Result<(ItemId, Zerometry<'a>), heed::Error>> + 'a> {
         Ok(self.item.iter(rtxn)?)
+    }
+
+    fn retrieve_frozen_items<'a>(&self, rtxn: &'a RoTxn) -> Result<FrozenItems<'a>> {
+        let items = self.item.iter(rtxn)?.collect::<Result<_, _>>()?;
+        Ok(FrozenItems { items })
     }
 
     pub fn add(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
@@ -236,8 +253,13 @@ impl Cellulite {
         // 2.
         self.remove_deleted_items(wtxn, progress, removed_items)?;
 
+        // 3.0
+        let frozen_items = self.retrieve_frozen_items(wtxn)?;
+        // currently heed doesn't know that writing in a database doesn't invalidate the pointer in another
+        let frozen_items: FrozenItems<'static> = unsafe { std::mem::transmute(frozen_items) };
+
         // 3.
-        self.insert_items_at_level_zero(wtxn, progress, &inserted_items)?;
+        self.insert_items_at_level_zero(wtxn, progress, &inserted_items, &frozen_items)?;
 
         // 4. We have to iterate over all the level-zero cells and insert the new items that are in them in the database at the next level if we need to
         //    TODO: Could be parallelized
@@ -251,7 +273,7 @@ impl Cellulite {
             if bitmap.len() < self.threshold || bitmap.intersection_len(&inserted_items) == 0 {
                 continue;
             }
-            self.insert_chunk_of_items_recursively(wtxn, bitmap, cell)?;
+            self.insert_chunk_of_items_recursively(wtxn, bitmap, cell, &frozen_items)?;
         }
 
         Ok(())
@@ -343,6 +365,7 @@ impl Cellulite {
         wtxn: &mut RwTxn,
         progress: &impl Progress,
         items: &RoaringBitmap,
+        frozen_items: &FrozenItems<'static>,
     ) -> Result<()> {
         progress.update(BuildSteps::InsertItemsAtLevelZero);
         steppe::make_enum_progress! {
@@ -358,9 +381,8 @@ impl Cellulite {
         let mut belly_cells = HashMap::new();
         // TODO: Could be parallelized very easily, we just have to merge the hashmap at the end or use a shared map
         for item in items.iter() {
-            let shape = self
-                .item_db()
-                .get(wtxn, &item)?
+            let shape = frozen_items
+                .get(item)
                 .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
             let (cells, belly) = Self::explode_level_zero_geo(shape)?;
             for cell in cells {
@@ -462,6 +484,7 @@ impl Cellulite {
         wtxn: &mut RwTxn,
         items: RoaringBitmap,
         cell: CellIndex,
+        frozen_items: &FrozenItems<'static>,
     ) -> Result<()> {
         // 1. If we cannot increase the resolution, we are done
         let Some(children_cells) = get_children_cells(cell)? else {
@@ -474,9 +497,8 @@ impl Cellulite {
         for &cell in children_cells.iter() {
             let cell_shape = get_cell_shape(cell);
             for item in items.iter() {
-                let shape = self
-                    .item_db()
-                    .get(wtxn, &item)?
+                let shape = frozen_items
+                    .get(item)
                     .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
                 match shape.relation(&cell_shape) {
                     Relation::Contains => {
@@ -514,16 +536,15 @@ impl Cellulite {
             self.cell_db().put(wtxn, &Key::Cell(cell), &new_bitmap)?;
             if original_bitmap.len() >= self.threshold {
                 // if we were already too large we can immediately jump to the next resolution
-                self.insert_chunk_of_items_recursively(wtxn, items_to_insert, cell)?;
+                self.insert_chunk_of_items_recursively(wtxn, items_to_insert, cell, frozen_items)?;
             } else if new_bitmap.len() >= self.threshold {
                 let cell_shape = get_cell_shape(cell);
                 let mut belly_items = RoaringBitmap::new();
 
                 // If we just became too large, we have to retrieve the items that were already in the database insert them at the next resolution
                 for item_id in original_bitmap.iter() {
-                    let shape = self
-                        .item_db()
-                        .get(wtxn, &item_id)?
+                    let shape = frozen_items
+                        .get(item_id)
                         .ok_or_else(|| Error::InternalDocIdMissing(item_id, pos!()))?;
 
                     match shape.relation(&cell_shape) {
@@ -545,7 +566,7 @@ impl Cellulite {
                 self.inner_shape_cell_db()
                     .put(wtxn, &Key::Cell(cell), &inner_shape_cells)?;
 
-                self.insert_chunk_of_items_recursively(wtxn, items_to_insert, cell)?;
+                self.insert_chunk_of_items_recursively(wtxn, items_to_insert, cell, frozen_items)?;
             }
             // If we are not too large, we have nothing else to do yaay
         }
@@ -568,18 +589,6 @@ impl Cellulite {
             total_items,
             cells_by_resolution,
         })
-    }
-
-    fn item_db(&self) -> heed::Database<ItemKeyCodec, ZerometryCodec> {
-        self.item
-    }
-
-    fn cell_db(&self) -> heed::Database<CellKeyCodec, RoaringBitmapCodec> {
-        self.cell.remap_data_type()
-    }
-
-    fn inner_shape_cell_db(&self) -> heed::Database<CellKeyCodec, RoaringBitmapCodec> {
-        self.cell.remap_data_type()
     }
 
     // The strategy to retrieve the points in a shape is to:
@@ -716,4 +725,14 @@ fn get_children_cells(cell: CellIndex) -> Result<Option<Vec<CellIndex>>, Error> 
         tiler.add(polygon)?;
     }
     Ok(Some(tiler.into_coverage().collect()))
+}
+
+struct FrozenItems<'a> {
+    items: HashMap<ItemId, Zerometry<'a>>,
+}
+
+impl<'a> FrozenItems<'a> {
+    pub fn get(&self, item: u32) -> Option<Zerometry<'a>> {
+        self.items.get(&item).copied()
+    }
 }
