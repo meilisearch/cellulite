@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cell::RefCell,
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     sync::atomic::Ordering,
 };
@@ -20,7 +21,9 @@ use heed::{
 };
 use intmap::IntMap;
 use keys::{CellIndexCodec, CellKeyCodec, ItemKeyCodec, Key, KeyPrefixVariantCodec, KeyVariant};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use steppe::Progress;
+use thread_local::ThreadLocal;
 
 mod error;
 mod keys;
@@ -256,7 +259,7 @@ impl Cellulite {
 
         // 3.0
         let frozen_items = self.retrieve_frozen_items(wtxn)?;
-        // currently heed doesn't know that writing in a database doesn't invalidate the pointer in another
+        // currently heed doesn't know that writing in a database doesn't invalidate the pointers in another
         let frozen_items: FrozenItems<'static> = unsafe { std::mem::transmute(frozen_items) };
 
         // 3.
@@ -371,37 +374,62 @@ impl Cellulite {
         progress.update(BuildSteps::InsertItemsAtLevelZero);
         steppe::make_enum_progress! {
             pub enum InsertItemsAtLevelZeroSteps {
-                InsertItemsAtLevelZero,
+                SplitItemsToCells,
+                MergeCellsMap,
                 WriteCellsToDatabase,
             }
         }
+        progress.update(InsertItemsAtLevelZeroSteps::SplitItemsToCells);
         let (atomic, step) = AtomicItemStep::new(items.len());
         progress.update(step);
-        // level 0 only have 122 cells => that fits in RAM
-        let mut to_insert = HashMap::with_capacity(122);
-        let mut belly_cells = HashMap::new();
+
+        let tls: ThreadLocal<RefCell<(HashMap<_, _>, HashMap<_, _>)>> = ThreadLocal::new();
+
         // TODO: Could be parallelized very easily, we just have to merge the hashmap at the end or use a shared map
-        for item in items.iter() {
-            let shape = frozen_items
-                .get(item)
-                .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
-            let (cells, belly) = Self::explode_level_zero_geo(shape)?;
-            for cell in cells {
-                to_insert
-                    .entry(cell)
-                    .or_insert_with(RoaringBitmap::new)
-                    .insert(item);
-            }
-            for cell in belly {
-                belly_cells
-                    .entry(cell)
-                    .or_insert_with(RoaringBitmap::new)
-                    .insert(item);
-            }
-            atomic.fetch_add(1, Ordering::Relaxed);
-        }
+        items
+            .iter()
+            .par_bridge()
+            .try_for_each(|item| -> Result<_> {
+                let (to_insert, belly_cells) = &mut *tls.get_or_default().borrow_mut();
+
+                let shape = frozen_items
+                    .get(item)
+                    .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
+                let (cells, belly) = Self::explode_level_zero_geo(shape)?;
+                for cell in cells {
+                    to_insert
+                        .entry(cell)
+                        .or_insert_with(RoaringBitmap::new)
+                        .insert(item);
+                }
+                for cell in belly {
+                    belly_cells
+                        .entry(cell)
+                        .or_insert_with(RoaringBitmap::new)
+                        .insert(item);
+                }
+                atomic.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            })?;
+        progress.update(InsertItemsAtLevelZeroSteps::MergeCellsMap);
+        let (to_insert, belly) = tls
+            .into_iter()
+            .par_bridge()
+            .map(|refcell| refcell.into_inner())
+            .reduce(
+                Default::default,
+                |(mut l_insert, mut l_belly), (r_insert, r_belly)| {
+                    for (k, v) in r_insert {
+                        *l_insert.entry(k).or_default() |= v;
+                    }
+                    for (k, v) in r_belly {
+                        *l_belly.entry(k).or_default() |= v;
+                    }
+                    (l_insert, l_belly)
+                },
+            );
         progress.update(InsertItemsAtLevelZeroSteps::WriteCellsToDatabase);
-        let (atomic, step) = AtomicCellStep::new(to_insert.len() as u64);
+        let (atomic, step) = AtomicCellStep::new(to_insert.len() as u64 + belly.len() as u64);
         progress.update(step);
         for (cell, items) in to_insert {
             let mut bitmap = self
@@ -412,6 +440,16 @@ impl Cellulite {
             self.cell_db().put(wtxn, &Key::Cell(cell), &bitmap)?;
             atomic.fetch_add(1, Ordering::Relaxed);
         }
+        for (cell, items) in belly {
+            let mut bitmap = self
+                .cell_db()
+                .get(wtxn, &Key::InnerShape(cell))?
+                .unwrap_or_default();
+            bitmap |= items;
+            self.cell_db().put(wtxn, &Key::InnerShape(cell), &bitmap)?;
+            atomic.fetch_add(1, Ordering::Relaxed);
+        }
+
         Ok(())
     }
 
