@@ -10,10 +10,14 @@ use geo::{Densify, Haversine, MultiPolygon};
 use geo_types::Polygon;
 use geojson::GeoJson;
 use h3o::{
-    geom::{ContainmentMode, TilerBuilder},
     CellIndex, LatLng, Resolution,
+    geom::{ContainmentMode, TilerBuilder},
 };
-use heed::{byteorder::BE, types::{Bytes, U32}, Env, RoTxn, RwTxn, Unspecified};
+use heed::{
+    Env, RoTxn, RwTxn, Unspecified,
+    byteorder::BE,
+    types::{Bytes, U32},
+};
 use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
 use steppe::Progress;
 
@@ -68,7 +72,7 @@ impl<'a> heed::BytesDecode<'a> for UpdateType {
         match bytes {
             [b] if *b == UpdateType::Insert as u8 => Ok(UpdateType::Insert),
             [b] if *b == UpdateType::Delete as u8 => Ok(UpdateType::Delete),
-            _ => panic!("Invalid update type {:?}", bytes),
+            _ => panic!("Invalid update type {bytes:?}"),
         }
     }
 }
@@ -186,7 +190,9 @@ impl Cellulite {
 
     /// The `geo` must be a valid zerometry otherwise the database will be corrupted.
     pub fn add_raw_zerometry(&self, wtxn: &mut RwTxn, item: ItemId, geo: &[u8]) -> Result<()> {
-        self.item_db().remap_data_type::<Bytes>().put(wtxn, &Key::Item(item), &geo)?;
+        self.item_db()
+            .remap_data_type::<Bytes>()
+            .put(wtxn, &Key::Item(item), geo)?;
         self.update.put(wtxn, &item, &UpdateType::Insert)?;
         Ok(())
     }
@@ -208,15 +214,13 @@ impl Cellulite {
         let mut inserted = RoaringBitmap::new();
         let mut deleted = RoaringBitmap::new();
 
-        let mut iter = self.update.iter(wtxn)?;
-        while let Some(ret) = iter.next() {
+        for ret in self.update.iter(wtxn)? {
             match ret? {
                 (item, UpdateType::Insert) => inserted.try_push(item).unwrap(),
                 (item, UpdateType::Delete) => deleted.try_push(item).unwrap(),
             }
             atomic.fetch_add(1, Ordering::Relaxed);
         }
-        drop(iter);
         progress.update(BuildSteps::ClearUpdatedItems);
         self.update.clear(wtxn)?;
 
@@ -364,7 +368,7 @@ impl Cellulite {
                 .item_db()
                 .get(wtxn, &Key::Item(item))?
                 .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
-            let (cells, belly) = self.explode_level_zero_geo(wtxn, item, shape)?;
+            let (cells, belly) = Self::explode_level_zero_geo(shape)?;
             for cell in cells {
                 to_insert
                     .entry(cell)
@@ -394,12 +398,7 @@ impl Cellulite {
         Ok(())
     }
 
-    fn explode_level_zero_geo(
-        &self,
-        rtxn: &RoTxn,
-        item: ItemId,
-        shape: Zerometry,
-    ) -> Result<(Vec<CellIndex>, Vec<CellIndex>), Error> {
+    fn explode_level_zero_geo(shape: Zerometry) -> Result<(Vec<CellIndex>, Vec<CellIndex>), Error> {
         match shape {
             Zerometry::Point(point) => {
                 let cell = LatLng::new(point.lat(), point.lng())
@@ -447,7 +446,7 @@ impl Cellulite {
                 let mut to_insert = Vec::new();
                 let mut belly_cells = Vec::new();
                 for polygon in multi_polygon.polygons() {
-                    let (cells, belly) = self.explode_level_zero_geo(rtxn, item, polygon.into())?;
+                    let (cells, belly) = Self::explode_level_zero_geo(polygon.into())?;
                     to_insert.extend(cells);
                     belly_cells.extend(belly);
                 }
@@ -464,9 +463,9 @@ impl Cellulite {
     ///  - If it was already too large, repeat the process with the next resolution
     ///  - If it **just became** too large. Retrieve all the items it contains and add them to the list of items to handle
     ///    Call ourselves recursively on the next resolution
-    fn insert_chunk_of_items_recursively<'a>(
+    fn insert_chunk_of_items_recursively(
         &self,
-        wtxn: &'a mut RwTxn,
+        wtxn: &mut RwTxn,
         items: RoaringBitmap,
         cell: CellIndex,
     ) -> Result<()> {
@@ -701,11 +700,10 @@ pub struct Stats {
 }
 
 fn get_cell_shape(cell: CellIndex) -> MultiPolygon {
-    let cell_polygon = h3o::geom::SolventBuilder::new()
+    h3o::geom::SolventBuilder::new()
         .build()
         .dissolve(Some(cell))
-        .unwrap();
-    cell_polygon
+        .unwrap()
 }
 
 /// Return None if we cannot increase the resolution

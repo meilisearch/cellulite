@@ -203,12 +203,12 @@ fn main() {
             for (idx, (name, bitmap)) in metadata_builder.iter().enumerate() {
                 metadata
                     .remap_data_type::<RoaringBitmapCodec>()
-                    .put(&mut wtxn, &format!("bitmap_{idx:010}"), &bitmap)
+                    .put(&mut wtxn, &format!("bitmap_{idx:010}"), bitmap)
                     .unwrap();
                 fst_builder.insert(name, idx as u64).unwrap();
             }
             let fst = fst_builder.into_inner().unwrap();
-            metadata.put(&mut wtxn, &"fst", &fst).unwrap();
+            metadata.put(&mut wtxn, "fst", &fst).unwrap();
         }
         if !args.no_commit {
             wtxn.commit().unwrap();

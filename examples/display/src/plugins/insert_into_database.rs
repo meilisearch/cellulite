@@ -105,6 +105,7 @@ impl InsertIntoDatabase {
                 InsertMode::Polygon => {
                     let mut points = self.insert_shape.lock();
                     ui.label(format!("Points collected: {}", points.len()));
+                    #[allow(clippy::collapsible_if)]
                     if points.len() >= 3 {
                         if ui.button("Complete polygon").clicked() {
                             let mut polygon_points = points
@@ -124,6 +125,7 @@ impl InsertIntoDatabase {
                             points.clear();
                         }
                     }
+                    #[allow(clippy::collapsible_if)]
                     if !points.is_empty() {
                         if ui.button("Clear points").clicked() {
                             points.clear();
@@ -151,12 +153,12 @@ impl Plugin for InsertIntoDatabase {
                 let points = self.insert_shape.lock();
                 for point in points.iter() {
                     let center = projector.project(Point::new(point.x, point.y));
-                    draw_diagonal_cross(&ui.painter(), center.to_pos2(), egui::Color32::YELLOW);
+                    draw_diagonal_cross(ui.painter(), center.to_pos2(), egui::Color32::YELLOW);
                 }
             }
             InsertMode::Polygon => {
                 let points = self.insert_shape.lock();
-                if points.len() >= 1 {
+                if !points.is_empty() {
                     let mut line: Vec<Pos2> = points
                         .iter()
                         .map(|point| projector.project(Point::new(point.x, point.y)).to_pos2())
@@ -178,7 +180,7 @@ impl Plugin for InsertIntoDatabase {
                 // Draw yellow crosses at each point
                 for point in points.iter() {
                     let center = projector.project(Point::new(point.x, point.y));
-                    draw_diagonal_cross(&ui.painter(), center.to_pos2(), egui::Color32::YELLOW);
+                    draw_diagonal_cross(ui.painter(), center.to_pos2(), egui::Color32::YELLOW);
                 }
             }
             _ => {}

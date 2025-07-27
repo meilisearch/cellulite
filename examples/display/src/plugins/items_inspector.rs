@@ -21,6 +21,7 @@ use crate::{
 pub struct ItemsInspector {
     pub query: String,
     pub runner: Runner,
+    #[allow(clippy::type_complexity)]
     pub selected: Option<(u32, String, GeoJson, Vec<CellIndex>, Vec<CellIndex>)>,
     pub search_result: Option<Vec<(String, u32)>>,
     pub resolution_range: RangeInclusive<Resolution>,
@@ -76,7 +77,7 @@ impl ItemsInspector {
             }
             ui.separator();
             if let Some((item, name, geometry, cells, inner_shape_cells)) = &self.selected {
-                let response = ui.selectable_label(true, format!("{}: {}", name, item));
+                let response = ui.selectable_label(true, format!("{name}: {item}"));
                 ui.collapsing(RichText::new("Geojson").heading(), |ui| {
                     display_geojson_as_codeblock(ui, geometry);
                 });
@@ -108,10 +109,10 @@ impl ItemsInspector {
                 for (name, item) in result {
                     let response = ui.selectable_label(
                         self.selected.as_ref().map(|(id, _, _, _, _)| *id) == Some(*item),
-                        format!("{}: {}", name, item),
+                        format!("{name}: {item}"),
                     );
                     if response.clicked() {
-                        let geometry = self.runner.all_items.lock()[&item].clone();
+                        let geometry = self.runner.all_items.lock()[item].clone();
                         // Get the cells containing this document from the runner's all_db_cells
                         let cells = self
                             .runner
@@ -129,7 +130,8 @@ impl ItemsInspector {
                             .filter(|(_, bitmap)| bitmap.contains(*item))
                             .map(|(cell, _)| *cell)
                             .collect();
-                        self.selected = Some((*item, name.clone(), geometry, cells, inner_shape_cells));
+                        self.selected =
+                            Some((*item, name.clone(), geometry, cells, inner_shape_cells));
                     }
                 }
             } else {
@@ -142,17 +144,17 @@ impl ItemsInspector {
         let fst = self.runner.fst.lock();
         let mut result = Vec::with_capacity(50);
         let exact = Str::new(&self.query);
-        self.search_fst(&*fst, exact.clone(), &mut result);
+        self.search_fst(&fst, exact.clone(), &mut result);
         let prefix = exact
             .clone()
             .starts_with()
             .intersection(exact.clone().complement());
-        self.search_fst(&*fst, prefix.clone(), &mut result);
+        self.search_fst(&fst, prefix.clone(), &mut result);
         let lev = Levenshtein::new(&self.query, self.query.len() as u32 / 3).unwrap();
         let base = lev
             .starts_with()
             .intersection(exact.clone().starts_with().complement());
-        self.search_fst(&*fst, base, &mut result);
+        self.search_fst(&fst, base, &mut result);
         result
     }
 }
