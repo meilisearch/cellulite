@@ -14,11 +14,11 @@ use h3o::{
     geom::{ContainmentMode, TilerBuilder},
 };
 use heed::{
-    Env, RoTxn, RwTxn, Unspecified,
+    Env, RoTxn, RwTxn,
     byteorder::BE,
     types::{Bytes, U32},
 };
-use keys::{Key, KeyCodec, KeyPrefixVariantCodec, KeyVariant};
+use keys::{CellIndexCodec, CellKeyCodec, ItemKeyCodec, Key, KeyPrefixVariantCodec, KeyVariant};
 use steppe::Progress;
 
 mod error;
@@ -32,7 +32,8 @@ mod test;
 pub use crate::error::Error;
 use crate::{roaring::RoaringBitmapCodec, zerometry::ZerometryCodec};
 
-pub type MainDb = heed::Database<KeyCodec, Unspecified>;
+pub type ItemDb = heed::Database<ItemKeyCodec, ZerometryCodec>;
+pub type CellDb = heed::Database<CellKeyCodec, CellIndexCodec>;
 pub type UpdateDb = heed::Database<U32<BE>, UpdateType>;
 pub type ItemId = u32;
 
@@ -79,7 +80,8 @@ impl<'a> heed::BytesDecode<'a> for UpdateType {
 
 #[derive(Clone)]
 pub struct Cellulite {
-    pub(crate) main: MainDb,
+    pub(crate) item: ItemDb,
+    pub(crate) cell: CellDb,
     pub(crate) update: UpdateDb,
     /// After how many elements should we break a cell into sub-cells
     pub threshold: u64,
@@ -87,7 +89,7 @@ pub struct Cellulite {
 
 impl Cellulite {
     pub const fn nb_dbs() -> u32 {
-        2
+        3
     }
 
     pub const fn default_threshold() -> u64 {
@@ -95,25 +97,29 @@ impl Cellulite {
     }
 
     pub fn create_from_env<Tls>(env: &Env<Tls>, wtxn: &mut RwTxn) -> Result<Self> {
-        let main = env.create_database(wtxn, Some("cellulite-main"))?;
+        let item = env.create_database(wtxn, Some("cellulite-item"))?;
+        let cell = env.create_database(wtxn, Some("cellulite-cell"))?;
         let update = env.create_database(wtxn, Some("cellulite-update"))?;
         Ok(Self {
-            main,
+            item,
+            cell,
             update,
             threshold: Self::default_threshold(),
         })
     }
 
-    pub fn from_dbs(main: MainDb, update: UpdateDb) -> Self {
+    pub fn from_dbs(item: ItemDb, cell: CellDb, update: UpdateDb) -> Self {
         Self {
-            main,
+            item,
+            cell,
             update,
             threshold: Self::default_threshold(),
         }
     }
 
     pub fn clear(&self, wtxn: &mut RwTxn) -> Result<()> {
-        self.main.clear(wtxn)?;
+        self.item.clear(wtxn)?;
+        self.cell.clear(wtxn)?;
         self.update.clear(wtxn)?;
         Ok(())
     }
@@ -124,10 +130,10 @@ impl Cellulite {
         rtxn: &'a RoTxn,
     ) -> Result<impl Iterator<Item = Result<(CellIndex, RoaringBitmap), heed::Error>> + 'a> {
         Ok(self
-            .main
+            .cell
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter(rtxn, &KeyVariant::Cell)?
-            .remap_types::<KeyCodec, RoaringBitmapCodec>()
+            .remap_types::<CellKeyCodec, RoaringBitmapCodec>()
             .map(|res| {
                 res.map(|(key, bitmap)| {
                     let Key::Cell(cell) = key else { unreachable!() };
@@ -142,10 +148,10 @@ impl Cellulite {
         rtxn: &'a RoTxn,
     ) -> Result<impl Iterator<Item = Result<(CellIndex, RoaringBitmap), heed::Error>> + 'a> {
         Ok(self
-            .main
+            .cell
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter(rtxn, &KeyVariant::InnerShape)?
-            .remap_types::<KeyCodec, RoaringBitmapCodec>()
+            .remap_types::<CellKeyCodec, RoaringBitmapCodec>()
             .map(|res| {
                 res.map(|(key, bitmap)| {
                     let Key::InnerShape(cell) = key else {
@@ -158,9 +164,7 @@ impl Cellulite {
 
     /// Return the coordinates of the items rounded down to 50cm if this id exists in the DB. Returns `None` otherwise.
     pub fn item<'a>(&self, rtxn: &'a RoTxn, item: ItemId) -> Result<Option<Zerometry<'a>>> {
-        self.item_db()
-            .get(rtxn, &Key::Item(item))
-            .map_err(Error::from)
+        self.item_db().get(rtxn, &item).map_err(Error::from)
     }
 
     /// Iterate over all the items in the database
@@ -168,22 +172,12 @@ impl Cellulite {
         &self,
         rtxn: &'a RoTxn,
     ) -> Result<impl Iterator<Item = Result<(ItemId, Zerometry<'a>), heed::Error>> + 'a> {
-        Ok(self
-            .main
-            .remap_key_type::<KeyPrefixVariantCodec>()
-            .prefix_iter(rtxn, &KeyVariant::Item)?
-            .remap_types::<KeyCodec, ZerometryCodec>()
-            .map(|res| {
-                res.map(|(key, cell)| {
-                    let Key::Item(item) = key else { unreachable!() };
-                    (item, cell)
-                })
-            }))
+        Ok(self.item.iter(rtxn)?)
     }
 
     pub fn add(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
         let geom = geo_types::Geometry::<f64>::try_from(geo.clone()).unwrap();
-        self.item_db().put(wtxn, &Key::Item(item), &geom)?;
+        self.item_db().put(wtxn, &item, &geom)?;
         self.update.put(wtxn, &item, &UpdateType::Insert)?;
         Ok(())
     }
@@ -192,7 +186,7 @@ impl Cellulite {
     pub fn add_raw_zerometry(&self, wtxn: &mut RwTxn, item: ItemId, geo: &[u8]) -> Result<()> {
         self.item_db()
             .remap_data_type::<Bytes>()
-            .put(wtxn, &Key::Item(item), geo)?;
+            .put(wtxn, &item, geo)?;
         self.update.put(wtxn, &item, &UpdateType::Insert)?;
         Ok(())
     }
@@ -287,7 +281,7 @@ impl Cellulite {
         let (atomic, step) = AtomicItemStep::new(items.len());
         progress.update(step.clone());
         for item in items.iter() {
-            self.item_db().delete(wtxn, &Key::Item(item))?;
+            self.item_db().delete(wtxn, &item)?;
             atomic.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -298,7 +292,7 @@ impl Cellulite {
             .cell_db()
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter_mut(wtxn, &KeyVariant::Cell)?
-            .remap_key_type::<KeyCodec>();
+            .remap_key_type::<CellKeyCodec>();
         while let Some(ret) = iter.next() {
             let (key, mut bitmap) = ret?;
             let len = bitmap.len();
@@ -324,7 +318,7 @@ impl Cellulite {
             .inner_shape_cell_db()
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter_mut(wtxn, &KeyVariant::InnerShape)?
-            .remap_key_type::<KeyCodec>();
+            .remap_key_type::<CellKeyCodec>();
         while let Some(ret) = iter.next() {
             let (key, mut bitmap) = ret?;
             let len = bitmap.len();
@@ -366,7 +360,7 @@ impl Cellulite {
         for item in items.iter() {
             let shape = self
                 .item_db()
-                .get(wtxn, &Key::Item(item))?
+                .get(wtxn, &item)?
                 .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
             let (cells, belly) = Self::explode_level_zero_geo(shape)?;
             for cell in cells {
@@ -482,7 +476,7 @@ impl Cellulite {
             for item in items.iter() {
                 let shape = self
                     .item_db()
-                    .get(wtxn, &Key::Item(item))?
+                    .get(wtxn, &item)?
                     .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
                 match shape.relation(&cell_shape) {
                     Relation::Contains => {
@@ -529,7 +523,7 @@ impl Cellulite {
                 for item_id in original_bitmap.iter() {
                     let shape = self
                         .item_db()
-                        .get(wtxn, &Key::Item(item_id))?
+                        .get(wtxn, &item_id)?
                         .ok_or_else(|| Error::InternalDocIdMissing(item_id, pos!()))?;
 
                     match shape.relation(&cell_shape) {
@@ -576,16 +570,16 @@ impl Cellulite {
         })
     }
 
-    fn item_db(&self) -> heed::Database<KeyCodec, ZerometryCodec> {
-        self.main.remap_data_type()
+    fn item_db(&self) -> heed::Database<ItemKeyCodec, ZerometryCodec> {
+        self.item
     }
 
-    fn cell_db(&self) -> heed::Database<KeyCodec, RoaringBitmapCodec> {
-        self.main.remap_data_type()
+    fn cell_db(&self) -> heed::Database<CellKeyCodec, RoaringBitmapCodec> {
+        self.cell.remap_data_type()
     }
 
-    fn inner_shape_cell_db(&self) -> heed::Database<KeyCodec, RoaringBitmapCodec> {
-        self.main.remap_data_type()
+    fn inner_shape_cell_db(&self) -> heed::Database<CellKeyCodec, RoaringBitmapCodec> {
+        self.cell.remap_data_type()
     }
 
     // The strategy to retrieve the points in a shape is to:
@@ -670,7 +664,7 @@ impl Cellulite {
         double_check -= &ret;
 
         for item in double_check {
-            let shape = self.item_db().get(rtxn, &Key::Item(item))?.unwrap();
+            let shape = self.item_db().get(rtxn, &item)?.unwrap();
             match shape.relation(&polygon) {
                 Relation::Contains | Relation::Intersects | Relation::Contained => {
                     ret.insert(item);
