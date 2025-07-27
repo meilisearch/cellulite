@@ -18,6 +18,7 @@ use heed::{
     byteorder::BE,
     types::{Bytes, U32},
 };
+use intmap::IntMap;
 use keys::{CellIndexCodec, CellKeyCodec, ItemKeyCodec, Key, KeyPrefixVariantCodec, KeyVariant};
 use steppe::Progress;
 
@@ -728,11 +729,11 @@ fn get_children_cells(cell: CellIndex) -> Result<Option<Vec<CellIndex>>, Error> 
 }
 
 struct FrozenItems<'a> {
-    items: HashMap<ItemId, Zerometry<'a>>,
+    items: IntMap<ItemId, Zerometry<'a>>,
 }
 
 impl<'a> FrozenItems<'a> {
     pub fn get(&self, item: u32) -> Option<Zerometry<'a>> {
-        self.items.get(&item).copied()
+        self.items.get(item).copied()
     }
 }
