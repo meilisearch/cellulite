@@ -7,8 +7,8 @@ use steppe::NoProgress;
 use tempfile::TempDir;
 
 use crate::{
-    roaring::RoaringBitmapCodec, zerometry::ZerometryCodec, Cellulite, ItemId, Key, KeyCodec,
-    KeyPrefixVariantCodec, KeyVariant,
+    CellKeyCodec, Cellulite, ItemId, Key, KeyPrefixVariantCodec, KeyVariant,
+    roaring::RoaringBitmapCodec,
 };
 
 pub struct DatabaseHandle {
@@ -31,27 +31,20 @@ impl DatabaseHandle {
         let mut s = String::new();
 
         s.push_str("# Items\n");
-        let iter = self
-            .database
-            .main
-            .remap_types::<KeyPrefixVariantCodec, ZerometryCodec>()
-            .prefix_iter(rtxn, &KeyVariant::Item)
-            .unwrap()
-            .remap_key_type::<KeyCodec>();
+        let iter = self.database.item.iter(rtxn).unwrap();
         for ret in iter {
             let (key, value) = ret.unwrap();
-            let Key::Item(item) = key else { unreachable!() };
-            s.push_str(&format!("{item}: {value:?}\n"));
+            s.push_str(&format!("{key}: {value:?}\n"));
         }
 
         s.push_str("# Cells\n");
         let iter = self
             .database
-            .main
+            .cell
             .remap_types::<KeyPrefixVariantCodec, RoaringBitmapCodec>()
             .prefix_iter(rtxn, &KeyVariant::Cell)
             .unwrap()
-            .remap_key_type::<KeyCodec>();
+            .remap_key_type::<CellKeyCodec>();
         for ret in iter {
             let (key, value) = ret.unwrap();
             let Key::Cell(cell) = key else { unreachable!() };
@@ -220,7 +213,7 @@ fn bug_write_points_create_unrelated_cells() {
         49.63676497357687,
     ])));
     db.add(&mut wtxn, 0, &point).unwrap();
-    
+
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         7.435508967561083,
         43.76438119061842,
