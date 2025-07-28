@@ -192,7 +192,11 @@ impl Cellulite {
     }
 
     fn retrieve_frozen_items<'a>(&self, rtxn: &'a RoTxn) -> Result<FrozenItems<'a>> {
-        let items = self.item.iter(rtxn)?.collect::<Result<_, _>>()?;
+        let mut items = IntMap::with_capacity(self.item.len(rtxn)? as usize);
+        for ret in self.item.iter(rtxn)? {
+            let (k, v) = ret?;
+            items.insert(k, v);
+        }
         Ok(FrozenItems { items })
     }
 
