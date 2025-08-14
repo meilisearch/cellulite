@@ -15,7 +15,7 @@ use h3o::{
     geom::{ContainmentMode, TilerBuilder},
 };
 use heed::{
-    Env, RoTxn, RwTxn,
+    DatabaseStat, Env, RoTxn, RwTxn,
     byteorder::BE,
     types::{Bytes, U32},
 };
@@ -94,6 +94,18 @@ pub struct Cellulite {
 impl Cellulite {
     pub const fn nb_dbs() -> u32 {
         3
+    }
+
+    pub fn item_db_stats(&self, rtxn: &RoTxn) -> heed::Result<DatabaseStat> {
+        self.item.stat(rtxn)
+    }
+
+    pub fn cell_db_stats(&self, rtxn: &RoTxn) -> heed::Result<DatabaseStat> {
+        self.cell.stat(rtxn)
+    }
+
+    pub fn update_db_stats(&self, rtxn: &RoTxn) -> heed::Result<DatabaseStat> {
+        self.update.stat(rtxn)
     }
 
     pub const fn default_threshold() -> u64 {
