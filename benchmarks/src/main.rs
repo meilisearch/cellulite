@@ -190,7 +190,8 @@ fn main() {
             println!("Building the index...");
             let progress = DefaultProgress::default();
             progress.follow_progression_on_tty();
-            cellulite.build(&mut wtxn, &progress).unwrap();
+            let rtxn = env.read_txn().unwrap();
+            cellulite.build(&mut wtxn, &rtxn, &progress).unwrap();
             progress.finish();
 
             println!("Index built in {:?}", time.elapsed());

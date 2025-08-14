@@ -7,6 +7,7 @@ use std::{
 
 use ::roaring::RoaringBitmap;
 use ::zerometry::{Relation, RelationBetweenShapes, Zerometry};
+use crossbeam::channel::{Receiver, Sender};
 use geo::{Densify, Haversine, MultiPolygon};
 use geo_types::Polygon;
 use geojson::GeoJson;
@@ -21,7 +22,10 @@ use heed::{
 };
 use intmap::IntMap;
 use keys::{CellIndexCodec, CellKeyCodec, ItemKeyCodec, Key, KeyPrefixVariantCodec, KeyVariant};
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::{
+    Scope,
+    iter::{ParallelBridge, ParallelIterator},
+};
 use steppe::Progress;
 use thread_local::ThreadLocal;
 
@@ -158,6 +162,26 @@ impl Cellulite {
             }))
     }
 
+    /// Return all the belly cells used internally in the database
+    pub fn inner_db_belly_cells<'a>(
+        &self,
+        rtxn: &'a RoTxn,
+    ) -> Result<impl Iterator<Item = Result<(CellIndex, RoaringBitmap), heed::Error>> + 'a> {
+        Ok(self
+            .cell
+            .remap_key_type::<KeyPrefixVariantCodec>()
+            .prefix_iter(rtxn, &KeyVariant::InnerShape)?
+            .remap_types::<CellKeyCodec, RoaringBitmapCodec>()
+            .map(|res| {
+                res.map(|(key, bitmap)| {
+                    let Key::InnerShape(cell) = key else {
+                        unreachable!()
+                    };
+                    (cell, bitmap)
+                })
+            }))
+    }
+
     /// Return all the cells used internally in the database
     pub fn inner_shape_cells<'a>(
         &self,
@@ -198,6 +222,20 @@ impl Cellulite {
             items.insert(k, v);
         }
         Ok(FrozenItems { items })
+    }
+
+    fn retrieve_db_cells<'a>(&self, rtxn: &'a RoTxn) -> Result<DbCells<'a>> {
+        let mut cell = IntMap::with_capacity(self.cell.len(rtxn)? as usize);
+        let mut belly = IntMap::new();
+        let cell_iter = self.cell.iter(rtxn)?.remap_data_type::<Bytes>();
+        for ret in cell_iter {
+            let (k, v) = ret?;
+            match k {
+                Key::Cell(cell_index) => cell.insert(cell_index.into(), v),
+                Key::InnerShape(cell_index) => belly.insert(cell_index.into(), v),
+            };
+        }
+        Ok(DbCells { cell, belly })
     }
 
     pub fn add(&self, wtxn: &mut RwTxn, item: ItemId, geo: &GeoJson) -> Result<()> {
@@ -253,7 +291,7 @@ impl Cellulite {
     /// 3. We insert the new items in the database **only at the level 0**
     /// 4. We take each level-zero cell one by one and if it contains new items we insert them in the database in batch at the next level
     ///    TODO: Could be parallelized fairly easily I think
-    pub fn build(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<()> {
+    pub fn build(&self, wtxn: &mut RwTxn, rtxn: &RoTxn, progress: &impl Progress) -> Result<()> {
         // 1.
         let (inserted_items, removed_items) =
             self.retrieve_and_clear_updated_items(wtxn, progress)?;
@@ -264,26 +302,99 @@ impl Cellulite {
         // 3.0
         let frozen_items = self.retrieve_frozen_items(wtxn)?;
         // currently heed doesn't know that writing in a database doesn't invalidate the pointers in another
+        // safety: After this point we cannot write anything to the item database
         let frozen_items: FrozenItems<'static> = unsafe { std::mem::transmute(frozen_items) };
 
         // 3.
         self.insert_items_at_level_zero(wtxn, progress, &inserted_items, &frozen_items)?;
 
+        let db_cells = self.retrieve_db_cells(rtxn).unwrap();
+        let mut ret = Ok(());
+
         // 4. We have to iterate over all the level-zero cells and insert the new items that are in them in the database at the next level if we need to
         //    TODO: Could be parallelized
         progress.update(BuildSteps::InsertItemsRecursively); // we cannot detail more here
+        rayon::scope(|s| {
+            let db_cells = &db_cells;
+            let frozen_items = &frozen_items;
+            let (snd, rcv) = crossbeam::channel::bounded(rayon::current_num_threads() * 10);
+            s.spawn(move |s| {
+                let ret = self.dispatch_insert_items(
+                    s,
+                    db_cells,
+                    frozen_items,
+                    &inserted_items,
+                    snd.clone(),
+                );
+                if let Err(e) = ret {
+                    let _ = snd.send(Err(e));
+                }
+            });
+
+            if let Err(e) = self.write_cells(wtxn, rcv) {
+                ret = Err(e);
+            }
+        });
+
+        ret
+    }
+
+    fn write_cells(
+        &self,
+        wtxn: &mut RwTxn,
+        receiver: Receiver<Result<(Key, RoaringBitmap)>>,
+    ) -> Result<()> {
+        for ret in receiver.into_iter() {
+            let (key, bitmap) = ret?;
+            match key {
+                Key::Cell(_cell_index) => {
+                    self.cell_db().put(wtxn, &key, &bitmap)?;
+                }
+                Key::InnerShape(_cell_index) => {
+                    let original_bitmap = self
+                        .inner_shape_cell_db()
+                        .get(wtxn, &key)?
+                        .unwrap_or_default();
+                    self.inner_shape_cell_db()
+                        .put(wtxn, &key, &(original_bitmap | bitmap))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn dispatch_insert_items<'scope>(
+        &'scope self,
+        scope: &Scope<'scope>,
+        db_cell: &'scope DbCells,
+        frozen_items: &'scope FrozenItems<'static>,
+        inserted_items: &RoaringBitmap,
+        sender: Sender<Result<(Key, RoaringBitmap)>>,
+    ) -> Result<()> {
         for cell in CellIndex::base_cells() {
-            let bitmap = self
-                .cell_db()
-                .get(wtxn, &Key::Cell(cell))?
-                .unwrap_or_default();
+            let bitmap = match db_cell.get_cell(cell) {
+                Some(bytes) => RoaringBitmap::deserialize_unchecked_from(bytes).unwrap(),
+                None => RoaringBitmap::new(),
+            };
             // Awesome, we don't care about what's in the cell, wether it have multiple levels or not
-            if bitmap.len() < self.threshold || bitmap.intersection_len(&inserted_items) == 0 {
+            if bitmap.len() < self.threshold || bitmap.intersection_len(inserted_items) == 0 {
                 continue;
             }
-            self.insert_chunk_of_items_recursively(wtxn, bitmap, cell, &frozen_items)?;
+            let sender = sender.clone();
+            scope.spawn(move |s| {
+                let ret = self.insert_chunk_of_items_recursively(
+                    s,
+                    bitmap,
+                    cell,
+                    db_cell,
+                    frozen_items,
+                    sender.clone(),
+                );
+                if let Err(e) = ret {
+                    let _ = sender.send(Err(e));
+                }
+            });
         }
-
         Ok(())
     }
 
@@ -522,12 +633,14 @@ impl Cellulite {
     ///  - If it was already too large, repeat the process with the next resolution
     ///  - If it **just became** too large. Retrieve all the items it contains and add them to the list of items to handle
     ///    Call ourselves recursively on the next resolution
-    fn insert_chunk_of_items_recursively(
-        &self,
-        wtxn: &mut RwTxn,
+    fn insert_chunk_of_items_recursively<'scope>(
+        &'scope self,
+        scope: &Scope<'scope>,
         items: RoaringBitmap,
         cell: CellIndex,
-        frozen_items: &FrozenItems<'static>,
+        db_cell: &'scope DbCells,
+        frozen_items: &'scope FrozenItems<'static>,
+        sender: Sender<Result<(Key, RoaringBitmap)>>,
     ) -> Result<()> {
         // 1. If we cannot increase the resolution, we are done
         let Some(children_cells) = get_children_cells(cell)? else {
@@ -561,25 +674,29 @@ impl Cellulite {
 
         // 3.
         for (cell, items) in to_insert_in_belly {
-            let mut bitmap = self
-                .inner_shape_cell_db()
-                .get(wtxn, &Key::Cell(cell))?
-                .unwrap_or_default();
-            bitmap |= items;
-            self.inner_shape_cell_db()
-                .put(wtxn, &Key::Cell(cell), &bitmap)?;
+            let _ = sender.send(Ok((Key::InnerShape(cell), items)));
         }
 
         for (cell, mut items_to_insert) in to_insert {
-            let original_bitmap = self
-                .cell_db()
-                .get(wtxn, &Key::Cell(cell))?
-                .unwrap_or_default();
+            let original_bitmap = db_cell.get_cell_bitmap(cell).unwrap_or_default();
             let new_bitmap = &original_bitmap | &items_to_insert;
-            self.cell_db().put(wtxn, &Key::Cell(cell), &new_bitmap)?;
+            let _ = sender.send(Ok((Key::Cell(cell), new_bitmap.clone())));
             if original_bitmap.len() >= self.threshold {
                 // if we were already too large we can immediately jump to the next resolution
-                self.insert_chunk_of_items_recursively(wtxn, items_to_insert, cell, frozen_items)?;
+                let sender = sender.clone();
+                scope.spawn(move |s| {
+                    let ret = self.insert_chunk_of_items_recursively(
+                        s,
+                        items_to_insert,
+                        cell,
+                        db_cell,
+                        frozen_items,
+                        sender.clone(),
+                    );
+                    if let Err(e) = ret {
+                        let _ = sender.send(Err(e));
+                    }
+                });
             } else if new_bitmap.len() >= self.threshold {
                 let cell_shape = get_cell_shape(cell);
                 let mut belly_items = RoaringBitmap::new();
@@ -601,15 +718,22 @@ impl Cellulite {
                     }
                 }
 
-                let mut inner_shape_cells = self
-                    .inner_shape_cell_db()
-                    .get(wtxn, &Key::Cell(cell))?
-                    .unwrap_or_default();
-                inner_shape_cells |= belly_items;
-                self.inner_shape_cell_db()
-                    .put(wtxn, &Key::Cell(cell), &inner_shape_cells)?;
+                let _ = sender.send(Ok((Key::Cell(cell), belly_items)));
 
-                self.insert_chunk_of_items_recursively(wtxn, items_to_insert, cell, frozen_items)?;
+                let sender = sender.clone();
+                scope.spawn(move |s| {
+                    let ret = self.insert_chunk_of_items_recursively(
+                        s,
+                        items_to_insert,
+                        cell,
+                        db_cell,
+                        frozen_items,
+                        sender.clone(),
+                    );
+                    if let Err(e) = ret {
+                        let _ = sender.send(Err(e));
+                    }
+                });
             }
             // If we are not too large, we have nothing else to do yaay
         }
@@ -777,5 +901,30 @@ struct FrozenItems<'a> {
 impl<'a> FrozenItems<'a> {
     pub fn get(&self, item: u32) -> Option<Zerometry<'a>> {
         self.items.get(item).copied()
+    }
+}
+
+struct DbCells<'a> {
+    cell: IntMap<u64, &'a [u8]>,
+    belly: IntMap<u64, &'a [u8]>,
+}
+
+impl<'a> DbCells<'a> {
+    pub fn get_cell(&self, item: CellIndex) -> Option<&'a [u8]> {
+        self.cell.get(item.into()).copied()
+    }
+
+    pub fn get_cell_bitmap(&self, item: CellIndex) -> Option<RoaringBitmap> {
+        self.get_cell(item)
+            .map(|bytes| RoaringBitmap::deserialize_unchecked_from(bytes).unwrap())
+    }
+
+    pub fn get_belly(&self, item: CellIndex) -> Option<&'a [u8]> {
+        self.belly.get(item.into()).copied()
+    }
+
+    pub fn get_belly_bitmap(&self, item: CellIndex) -> Option<RoaringBitmap> {
+        self.get_belly(item)
+            .map(|bytes| RoaringBitmap::deserialize_unchecked_from(bytes).unwrap())
     }
 }
