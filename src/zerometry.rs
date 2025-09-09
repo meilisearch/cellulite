@@ -10,7 +10,8 @@ impl<'a> heed::BytesDecode<'a> for ZerometryCodec {
     type DItem = Zerometry<'a>;
 
     fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, BoxedError> {
-        Zerometry::from_bytes(bytes).map_err(Into::into)
+        // Safe because the keys and values are aligned on 64 bits
+        unsafe { Zerometry::from_bytes(bytes).map_err(Into::into) }
     }
 }
 

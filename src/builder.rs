@@ -285,8 +285,7 @@ impl Cellulite {
             }
             Zerometry::MultiPoints(multi_point) => {
                 let to_insert = multi_point
-                    .coords()
-                    .iter()
+                    .points()
                     .map(|point| {
                         LatLng::new(point.lat(), point.lng())
                             .unwrap()

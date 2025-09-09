@@ -15,7 +15,8 @@ exclude = ["assets"]
 members = [ "benchmarks","examples/*"]
 
 [workspace.dependencies]
-geo = "0.30.0"
+# We don't want all the rayon thingy that are enabled by default in the geo crate
+geo = { version = "0.30.0", default-features = false, features = ["earcutr"] }
 geojson = "0.24.2"
 geo-types = "0.7.15"
 h3o = { version = "0.9.0", features = ["geo"] }
@@ -24,8 +25,8 @@ ordered-float = "5.0.0"
 roaring = "0.11.1"
 thiserror = "2.0.12"
 steppe = { version = "0.4.0", default-features = false }
-zerometry = { version = "0.2.0" }
-# zerometry = { path = "../zerometry" }
+# zerometry = { version = "0.2.0" }
+zerometry = { path = "../zerometry" }
 # zerometry = { git = "https://github.com/irevoire/zerometry", rev = "629745a6284c5e8bdd6f6dac5dce4f69fe32dd57" }
 
 [dependencies]
