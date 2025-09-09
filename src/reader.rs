@@ -29,7 +29,7 @@ impl Cellulite {
         &self,
         rtxn: &RoTxn,
         polygon: &Polygon,
-        inspector: &mut dyn FnMut((FilteringStep, CellIndex)),
+        mut inspector: impl FnMut((FilteringStep, CellIndex)),
     ) -> Result<RoaringBitmap> {
         let polygon = Haversine.densify(polygon, 1_000.0);
         let mut tiler = TilerBuilder::new(Resolution::Zero)
@@ -131,7 +131,7 @@ impl Cellulite {
         radius: f64,
         resolution: usize,
         measure: &Measure,
-        inspector: &mut dyn FnMut((FilteringStep, CellIndex)),
+        inspector: impl FnMut((FilteringStep, CellIndex)),
     ) -> Result<RoaringBitmap> {
         let n = resolution as f64;
 
