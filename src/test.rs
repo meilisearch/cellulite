@@ -458,7 +458,7 @@ fn write_polygon_with_belly_cells_at_res0() {
          (x: -13.3521118164062, y: 51.781051635742195)
     ];
     let res = cellulite.in_shape(&wtxn, &filter).unwrap();
-    insta::assert_debug_snapshot!(res, @"RoaringBitmap<[0]>");
+    insta::assert_debug_snapshot!(res, @"RoaringBitmap<[0, 1]>");
 }
 
 #[test]
@@ -508,7 +508,7 @@ fn write_polygon_with_belly_cells_at_res1() {
          (x: -14.853970527648926, y: 52.716609954833984)
     ];
     let res = cellulite.in_shape(&wtxn, &filter).unwrap();
-    insta::assert_debug_snapshot!(res, @"RoaringBitmap<[0]>");
+    insta::assert_debug_snapshot!(res, @"RoaringBitmap<[0, 1]>");
 }
 
 /*

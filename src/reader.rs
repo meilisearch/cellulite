@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use geo::{Densify, Destination, Haversine, MultiPolygon, Point, Polygon};
+use geo::{Densify, Destination, Haversine, MultiPolygon, Point, Polygon, Relate};
 use h3o::{
     CellIndex, Resolution,
     geom::{ContainmentMode, TilerBuilder},
@@ -48,44 +48,59 @@ impl Cellulite {
                 continue;
             }
 
-            let Some(items) = self.cell_db().get(rtxn, &Key::Cell(cell))? else {
+            let cell_items = self.cell_db().get(rtxn, &Key::Cell(cell))?;
+            let belly_items = self.cell_db().get(rtxn, &Key::Belly(cell))?;
+
+            if cell_items.is_none() && belly_items.is_none() {
                 (inspector)((FilteringStep::NotPresentInDB, cell));
                 continue;
-            };
+            }
 
             let cell_polygon = MultiPolygon::from(cell);
 
-            if geo::Contains::contains(&polygon, &cell_polygon) {
+            let relate = polygon.relate(&cell_polygon);
+
+            if relate.is_contains() {
                 (inspector)((FilteringStep::Returned, cell));
-                ret |= items;
-            } else if geo::Intersects::intersects(&polygon, &cell_polygon) {
-                let resolution = cell.resolution();
-                if items.len() < self.threshold || resolution == Resolution::Fifteen {
-                    (inspector)((FilteringStep::RequireDoubleCheck, cell));
-                    double_check |= items;
-                } else {
-                    (inspector)((FilteringStep::DeepDive, cell));
-                    let mut tiler = TilerBuilder::new(resolution.succ().unwrap())
-                        .containment_mode(ContainmentMode::Covers)
-                        .build();
-                    if too_large {
-                        tiler.add_batch(cell_polygon.into_iter())?;
+                if let Some(cell_items) = cell_items {
+                    ret |= cell_items;
+                }
+                if let Some(belly_items) = belly_items {
+                    ret |= belly_items;
+                }
+            } else if relate.is_intersects() {
+                if let Some(cell_items) = cell_items {
+                    let resolution = cell.resolution();
+                    if cell_items.len() < self.threshold || resolution == Resolution::Fifteen {
+                        (inspector)((FilteringStep::RequireDoubleCheck, cell));
+                        double_check |= cell_items;
                     } else {
-                        tiler.add(polygon.clone())?;
-                    }
-
-                    let mut cell_number = 0;
-
-                    for cell in tiler.into_coverage() {
-                        if !already_explored.contains(&cell) {
-                            to_explore.push_back(cell);
+                        (inspector)((FilteringStep::DeepDive, cell));
+                        let mut tiler = TilerBuilder::new(resolution.succ().unwrap())
+                            .containment_mode(ContainmentMode::Covers)
+                            .build();
+                        if too_large {
+                            tiler.add_batch(cell_polygon.into_iter())?;
+                        } else {
+                            tiler.add(polygon.clone())?;
                         }
-                        cell_number += 1;
-                    }
 
-                    if cell_number > 3 {
-                        too_large = true;
+                        let mut cell_number = 0;
+
+                        for cell in tiler.into_coverage() {
+                            if !already_explored.contains(&cell) {
+                                to_explore.push_back(cell);
+                            }
+                            cell_number += 1;
+                        }
+
+                        if cell_number > 3 {
+                            too_large = true;
+                        }
                     }
+                }
+                if let Some(belly_items) = belly_items {
+                    ret |= belly_items;
                 }
             } else {
                 // else: we can ignore the cell, it's not part of our shape
