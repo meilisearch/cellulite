@@ -139,7 +139,7 @@ fn basic_write() {
     # Belly Cells
     ");
 
-    db.build(&mut wtxn, &NoProgress).unwrap();
+    db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Version: 0.2.0
     # Items
@@ -169,7 +169,7 @@ fn basic_write() {
     # Belly Cells
     ");
 
-    db.build(&mut wtxn, &NoProgress).unwrap();
+    db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
 
     insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Version: 0.2.0
@@ -190,7 +190,7 @@ fn basic_write() {
         0.0, 3.0,
     ])));
     db.add(&mut wtxn, 3, &point).unwrap();
-    db.build(&mut wtxn, &NoProgress).unwrap();
+    db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
 
     insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Version: 0.2.0
@@ -228,7 +228,7 @@ fn bug_write_points_create_cells_too_deep() {
         54.586501531522245,
     ])));
     db.add(&mut wtxn, 1, &point).unwrap();
-    db.build(&mut wtxn, &NoProgress).unwrap();
+    db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Version: 0.2.0
     # Items
@@ -259,7 +259,7 @@ fn bug_write_points_create_unrelated_cells() {
         43.76438119061842,
     ])));
     db.add(&mut wtxn, 1, &point).unwrap();
-    db.build(&mut wtxn, &NoProgress).unwrap();
+    db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Version: 0.2.0
     # Items
@@ -298,7 +298,7 @@ fn query_points_on_transmeridian_cell() {
     db.database.threshold = 2;
 
     db.add(&mut wtxn, 0, &lake).unwrap();
-    db.build(&mut wtxn, &NoProgress).unwrap();
+    db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Version: 0.2.0
     # Items
@@ -316,7 +316,7 @@ fn query_points_on_transmeridian_cell() {
     insta::assert_debug_snapshot!(ret, @"RoaringBitmap<[0]>");
 
     db.add(&mut wtxn, 1, &airport).unwrap();
-    db.build(&mut wtxn, &NoProgress).unwrap();
+    db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Version: 0.2.0
     # Items
@@ -361,7 +361,7 @@ fn store_all_kind_of_collection() {
     db.add(&mut wtxn, 1, &feature.into()).unwrap();
     db.add(&mut wtxn, 2, &feature_collection.into()).unwrap();
 
-    db.build(&mut wtxn, &NoProgress).unwrap();
+    db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r"
     # Version: 0.2.0
     # Items
@@ -433,7 +433,7 @@ fn write_polygon_with_belly_cells_at_res0() {
     ])));
     cellulite.add(&mut wtxn, 1, &shape).unwrap();
 
-    cellulite.build(&mut wtxn, &NoProgress).unwrap();
+    cellulite.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(cellulite.snap(&wtxn), @r"
     # Version: 0.2.0
     # Items
@@ -482,7 +482,7 @@ fn write_polygon_with_belly_cells_at_res1() {
     ])));
     cellulite.add(&mut wtxn, 1, &shape).unwrap();
 
-    cellulite.build(&mut wtxn, &NoProgress).unwrap();
+    cellulite.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(cellulite.snap(&wtxn), @r"
     # Version: 0.2.0
     # Items

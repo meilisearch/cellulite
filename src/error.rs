@@ -5,6 +5,8 @@ use crate::{ItemId, metadata::Version};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     // User errors
+    #[error("The build was canceled")]
+    BuildCanceled,
     #[error("Document with id `{0}` contains a {1} but only `Geometry` type is supported")]
     InvalidGeoJsonTypeFormat(ItemId, &'static str),
     #[error(

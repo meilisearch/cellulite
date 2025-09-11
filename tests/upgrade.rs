@@ -60,7 +60,7 @@ fn from_0_2_0() {
             &geojson::GeoJson::Geometry(geojson::Value::Point(vec![0.0, 0.0]).into()),
         )
         .unwrap();
-    cellulite.build(&mut wtxn, &NoProgress).unwrap();
+    cellulite.build(&mut wtxn, &|| false, &NoProgress).unwrap();
 
     // We do the two same query except we removed the movie theater
     let ret = cellulite.in_shape(&wtxn, &trees).unwrap();

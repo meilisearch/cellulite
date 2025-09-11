@@ -22,9 +22,16 @@ use zerometry::{InputRelation, RelationBetweenShapes, Zerometry};
 use crate::{Cellulite, Error, keys::Key};
 
 impl Cellulite {
-    fn retrieve_frozen_items<'a>(&self, rtxn: &'a RoTxn) -> Result<FrozenItems<'a>> {
+    fn retrieve_frozen_items<'a>(
+        &self,
+        rtxn: &'a RoTxn,
+        cancel: impl Fn() -> bool + Send + Sync,
+    ) -> Result<FrozenItems<'a>> {
         let mut items = IntMap::with_capacity(self.item.len(rtxn)? as usize);
         for ret in self.item.iter(rtxn)? {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             let (k, v) = ret?;
             items.insert(k, v);
         }
@@ -34,6 +41,7 @@ impl Cellulite {
     fn retrieve_and_clear_updated_items(
         &self,
         wtxn: &mut RwTxn,
+        cancel: impl Fn() -> bool + Send + Sync,
         progress: &impl Progress,
     ) -> Result<(RoaringBitmap, RoaringBitmap)> {
         progress.update(BuildSteps::RetrieveUpdatedItems);
@@ -44,6 +52,9 @@ impl Cellulite {
         let mut deleted = RoaringBitmap::new();
 
         for ret in self.update.iter(wtxn)? {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             match ret? {
                 (item, UpdateType::Insert) => inserted.try_push(item).unwrap(),
                 (item, UpdateType::Delete) => deleted.try_push(item).unwrap(),
@@ -64,7 +75,12 @@ impl Cellulite {
     // 3. We insert the new items in the database **only at the level 0**
     // 4. We take each level-zero cell one by one and if it contains new items we insert them in the database in batch at the next level
     //    TODO: Could be parallelized fairly easily I think
-    pub fn build(&self, wtxn: &mut RwTxn, progress: &impl Progress) -> Result<()> {
+    pub fn build(
+        &self,
+        wtxn: &mut RwTxn,
+        cancel: &(impl Fn() -> bool + Send + Sync),
+        progress: &impl Progress,
+    ) -> Result<()> {
         let db_version = self.get_version(wtxn)?;
         if db_version != Version::default() {
             return Err(Error::VersionMismatchOnBuild(db_version));
@@ -72,23 +88,26 @@ impl Cellulite {
 
         // 1.
         let (inserted_items, removed_items) =
-            self.retrieve_and_clear_updated_items(wtxn, progress)?;
+            self.retrieve_and_clear_updated_items(wtxn, cancel, progress)?;
 
         // 2.
-        self.remove_deleted_items(wtxn, progress, removed_items)?;
+        self.remove_deleted_items(wtxn, cancel, progress, removed_items)?;
 
         // 3.0
-        let frozen_items = self.retrieve_frozen_items(wtxn)?;
+        let frozen_items = self.retrieve_frozen_items(wtxn, cancel)?;
         // currently heed doesn't know that writing in a database doesn't invalidate the pointers in another
         let frozen_items: FrozenItems<'static> = unsafe { std::mem::transmute(frozen_items) };
 
-        // 3.
-        self.insert_items_at_level_zero(wtxn, progress, &inserted_items, &frozen_items)?;
+        // 3.1
+        self.insert_items_at_level_zero(wtxn, cancel, progress, &inserted_items, &frozen_items)?;
 
         // 4. We have to iterate over all the level-zero cells and insert the new items that are in them in the database at the next level if we need to
         //    TODO: Could be parallelized
         progress.update(BuildSteps::InsertItemsRecursively); // we cannot detail more here
         for cell in CellIndex::base_cells() {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             let bitmap = self
                 .cell_db()
                 .get(wtxn, &Key::Cell(cell))?
@@ -97,7 +116,7 @@ impl Cellulite {
             if bitmap.len() < self.threshold || bitmap.intersection_len(&inserted_items) == 0 {
                 continue;
             }
-            self.insert_chunk_of_items_recursively(wtxn, bitmap, cell, &frozen_items)?;
+            self.insert_chunk_of_items_recursively(wtxn, cancel, bitmap, cell, &frozen_items)?;
         }
 
         progress.update(BuildSteps::UpdateTheMetadata);
@@ -114,6 +133,7 @@ impl Cellulite {
     fn remove_deleted_items(
         &self,
         wtxn: &mut RwTxn,
+        cancel: impl Fn() -> bool + Send + Sync,
         progress: &impl Progress,
         items: RoaringBitmap,
     ) -> Result<()> {
@@ -130,6 +150,9 @@ impl Cellulite {
         let (atomic, step) = AtomicItemStep::new(items.len());
         progress.update(step.clone());
         for item in items.iter() {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             self.item_db().delete(wtxn, &item)?;
             atomic.fetch_add(1, Ordering::Relaxed);
         }
@@ -143,6 +166,9 @@ impl Cellulite {
             .prefix_iter_mut(wtxn, &KeyVariant::Cell)?
             .remap_key_type::<CellKeyCodec>();
         while let Some(ret) = iter.next() {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             let (key, mut bitmap) = ret?;
             let len = bitmap.len();
             bitmap -= &items;
@@ -169,6 +195,9 @@ impl Cellulite {
             .prefix_iter_mut(wtxn, &KeyVariant::Belly)?
             .remap_key_type::<CellKeyCodec>();
         while let Some(ret) = iter.next() {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             let (key, mut bitmap) = ret?;
             let len = bitmap.len();
             bitmap -= &items;
@@ -190,6 +219,7 @@ impl Cellulite {
     fn insert_items_at_level_zero(
         &self,
         wtxn: &mut RwTxn,
+        cancel: impl Fn() -> bool + Send + Sync,
         progress: &impl Progress,
         items: &RoaringBitmap,
         frozen_items: &FrozenItems<'static>,
@@ -212,6 +242,9 @@ impl Cellulite {
             .iter()
             .par_bridge()
             .try_for_each(|item| -> Result<_> {
+                if cancel() {
+                    return Err(Error::BuildCanceled);
+                }
                 let (to_insert, belly_cells) = &mut *tls.get_or_default().borrow_mut();
 
                 let shape = frozen_items
@@ -254,6 +287,9 @@ impl Cellulite {
         let (atomic, step) = AtomicCellStep::new(to_insert.len() as u64 + belly.len() as u64);
         progress.update(step);
         for (cell, items) in to_insert {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             let mut bitmap = self
                 .cell_db()
                 .get(wtxn, &Key::Cell(cell))?
@@ -263,6 +299,9 @@ impl Cellulite {
             atomic.fetch_add(1, Ordering::Relaxed);
         }
         for (cell, items) in belly {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             let mut bitmap = self
                 .cell_db()
                 .get(wtxn, &Key::Belly(cell))?
@@ -376,6 +415,7 @@ impl Cellulite {
     fn insert_chunk_of_items_recursively(
         &self,
         wtxn: &mut RwTxn,
+        cancel: &(impl Fn() -> bool + Send + Sync),
         items: RoaringBitmap,
         cell: CellIndex,
         frozen_items: &FrozenItems<'static>,
@@ -389,6 +429,9 @@ impl Cellulite {
         let mut to_insert_in_belly = HashMap::new();
 
         for &cell in children_cells.iter() {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             let cell_shape = get_cell_shape(cell);
             for item in items.iter() {
                 let shape = frozen_items
@@ -416,6 +459,9 @@ impl Cellulite {
 
         // 3.
         for (cell, items) in to_insert_in_belly {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             let mut bitmap = self
                 .belly_cell_db()
                 .get(wtxn, &Key::Belly(cell))?
@@ -425,6 +471,9 @@ impl Cellulite {
         }
 
         for (cell, mut items_to_insert) in to_insert {
+            if cancel() {
+                return Err(Error::BuildCanceled);
+            }
             let original_bitmap = self
                 .cell_db()
                 .get(wtxn, &Key::Cell(cell))?
@@ -433,7 +482,13 @@ impl Cellulite {
             self.cell_db().put(wtxn, &Key::Cell(cell), &new_bitmap)?;
             if original_bitmap.len() >= self.threshold {
                 // if we were already too large we can immediately jump to the next resolution
-                self.insert_chunk_of_items_recursively(wtxn, items_to_insert, cell, frozen_items)?;
+                self.insert_chunk_of_items_recursively(
+                    wtxn,
+                    cancel,
+                    items_to_insert,
+                    cell,
+                    frozen_items,
+                )?;
             } else if new_bitmap.len() >= self.threshold {
                 let cell_shape = get_cell_shape(cell);
                 let mut belly_items = RoaringBitmap::new();
@@ -467,7 +522,13 @@ impl Cellulite {
                 self.belly_cell_db()
                     .put(wtxn, &Key::Belly(cell), &belly_cells)?;
 
-                self.insert_chunk_of_items_recursively(wtxn, items_to_insert, cell, frozen_items)?;
+                self.insert_chunk_of_items_recursively(
+                    wtxn,
+                    cancel,
+                    items_to_insert,
+                    cell,
+                    frozen_items,
+                )?;
             }
             // If we are not too large, we have nothing else to do yaay
         }

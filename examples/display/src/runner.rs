@@ -235,7 +235,7 @@ impl Runner {
                     self.db.add(&mut wtxn, id, shape).unwrap();
                 }
                 self.db
-                    .build(&mut wtxn, &DefaultProgress::default())
+                    .build(&mut wtxn, &|| false, &DefaultProgress::default())
                     .unwrap();
 
                 // We must recompute the fst, stats and db cells
