@@ -31,6 +31,9 @@ impl Cellulite {
         polygon: &Polygon,
         mut inspector: impl FnMut((FilteringStep, CellIndex)),
     ) -> Result<RoaringBitmap> {
+        // Roughly equivalent to the number of children we would have in three cells
+        const BECOME_TOO_LARGE: usize = 60;
+
         let polygon = Haversine.densify(polygon, 1_000.0);
         let mut tiler = TilerBuilder::new(Resolution::Zero)
             .containment_mode(ContainmentMode::Covers)
@@ -42,6 +45,7 @@ impl Cellulite {
         let mut to_explore: VecDeque<_> = tiler.into_coverage().collect();
         let mut already_explored: HashSet<CellIndex> = HashSet::with_capacity(to_explore.len());
         let mut too_large = false;
+        let mut already_tiled = None;
 
         while let Some(cell) = to_explore.pop_front() {
             if !already_explored.insert(cell) {
@@ -63,6 +67,12 @@ impl Cellulite {
             if relate.is_contains() {
                 (inspector)((FilteringStep::Returned, cell));
                 if let Some(cell_items) = cell_items {
+                    // If we're not too large it means we'll cover the whole shape again at the next resolution.
+                    // Since we already know that our children are guarenteed to be entirely contained in the shape
+                    // don't have to check them again.
+                    if let Some(next_res) = cell.resolution().succ() {
+                        already_explored.extend(cell.children(next_res));
+                    }
                     ret |= cell_items;
                 }
                 if let Some(belly_items) = belly_items {
@@ -74,14 +84,19 @@ impl Cellulite {
                     if cell_items.len() < self.threshold || resolution == Resolution::Fifteen {
                         (inspector)((FilteringStep::RequireDoubleCheck, cell));
                         double_check |= cell_items;
+                    } else if already_tiled == Some(resolution) {
+                        // We already tiled the whole shape at a previous step, no need to do it again
+                        continue;
                     } else {
+                        let next_res = resolution.succ().unwrap();
                         (inspector)((FilteringStep::DeepDive, cell));
-                        let mut tiler = TilerBuilder::new(resolution.succ().unwrap())
+                        let mut tiler = TilerBuilder::new(next_res)
                             .containment_mode(ContainmentMode::Covers)
                             .build();
                         if too_large {
                             tiler.add_batch(cell_polygon.into_iter())?;
                         } else {
+                            already_tiled = Some(resolution);
                             tiler.add(polygon.clone())?;
                         }
 
@@ -94,7 +109,7 @@ impl Cellulite {
                             cell_number += 1;
                         }
 
-                        if cell_number > 3 {
+                        if cell_number > BECOME_TOO_LARGE {
                             too_large = true;
                         }
                     }
