@@ -11,8 +11,7 @@ use heed::{
     types::{Bytes, U32},
 };
 use keys::{
-    CellIndexCodec, CellKeyCodec, ItemKeyCodec, Key, KeyPrefixVariantCodec, KeyVariant,
-    MetadataKey, UpdateType,
+    CellKeyCodec, ItemKeyCodec, Key, KeyPrefixVariantCodec, KeyVariant, MetadataKey, UpdateType,
 };
 use metadata::{Version, VersionCodec};
 
@@ -31,7 +30,7 @@ pub use crate::error::Error;
 use crate::{roaring::RoaringBitmapCodec, zerometry::ZerometryCodec};
 
 pub type ItemDb = heed::Database<ItemKeyCodec, ZerometryCodec>;
-pub type CellDb = heed::Database<CellKeyCodec, CellIndexCodec>;
+pub type CellDb = heed::Database<CellKeyCodec, RoaringBitmapCodec>;
 pub type UpdateDb = heed::Database<U32<BE>, UpdateType>;
 pub type MetadataDb = heed::Database<MetadataKey, Unspecified>;
 pub type ItemId = u32;
@@ -155,16 +154,14 @@ impl Cellulite {
         Ok(())
     }
 
-    fn item_db(&self) -> heed::Database<ItemKeyCodec, ZerometryCodec> {
+    #[inline]
+    fn item_db(&self) -> ItemDb {
         self.item
     }
 
-    fn cell_db(&self) -> heed::Database<CellKeyCodec, RoaringBitmapCodec> {
-        self.cell.remap_data_type()
-    }
-
-    fn belly_cell_db(&self) -> heed::Database<CellKeyCodec, RoaringBitmapCodec> {
-        self.cell.remap_data_type()
+    #[inline]
+    fn cell_db(&self) -> CellDb {
+        self.cell
     }
 
     /// Return the version of the cellulite database.

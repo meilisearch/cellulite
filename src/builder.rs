@@ -190,7 +190,7 @@ impl Cellulite {
         atomic.store(0, Ordering::Relaxed);
         progress.update(step);
         let mut iter = self
-            .belly_cell_db()
+            .cell_db()
             .remap_key_type::<KeyPrefixVariantCodec>()
             .prefix_iter_mut(wtxn, &KeyVariant::Belly)?
             .remap_key_type::<CellKeyCodec>();
@@ -463,11 +463,11 @@ impl Cellulite {
                 return Err(Error::BuildCanceled);
             }
             let mut bitmap = self
-                .belly_cell_db()
+                .cell_db()
                 .get(wtxn, &Key::Belly(cell))?
                 .unwrap_or_default();
             bitmap |= items;
-            self.belly_cell_db().put(wtxn, &Key::Belly(cell), &bitmap)?;
+            self.cell_db().put(wtxn, &Key::Belly(cell), &bitmap)?;
         }
 
         for (cell, mut items_to_insert) in to_insert {
@@ -515,12 +515,11 @@ impl Cellulite {
                 }
 
                 let mut belly_cells = self
-                    .belly_cell_db()
+                    .cell_db()
                     .get(wtxn, &Key::Belly(cell))?
                     .unwrap_or_default();
                 belly_cells |= belly_items;
-                self.belly_cell_db()
-                    .put(wtxn, &Key::Belly(cell), &belly_cells)?;
+                self.cell_db().put(wtxn, &Key::Belly(cell), &belly_cells)?;
 
                 self.insert_chunk_of_items_recursively(
                     wtxn,
