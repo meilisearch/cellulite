@@ -236,7 +236,8 @@ impl Cellulite {
         let (atomic, step) = AtomicItemStep::new(items.len());
         progress.update(step);
 
-        let tls: ThreadLocal<RefCell<(HashMap<_, _>, HashMap<_, _>)>> = ThreadLocal::new();
+        let tls_maps: ThreadLocal<RefCell<(HashMap<_, _>, HashMap<_, _>)>> = ThreadLocal::new();
+        let tls_vecs: ThreadLocal<RefCell<(Vec<_>, Vec<_>)>> = ThreadLocal::new();
 
         items
             .iter()
@@ -245,21 +246,24 @@ impl Cellulite {
                 if cancel() {
                     return Err(Error::BuildCanceled);
                 }
-                let (to_insert, belly_cells) = &mut *tls.get_or_default().borrow_mut();
+                let (cells_map, belly_map) = &mut *tls_maps.get_or_default().borrow_mut();
+                let (cells_vec, belly_vec) = &mut *tls_vecs.get_or_default().borrow_mut();
+                cells_vec.clear();
+                belly_vec.clear();
 
                 let shape = frozen_items
                     .get(item)
                     .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
-                let (cells, belly) = Self::explode_level_zero_geo(shape)?;
-                for cell in cells {
-                    to_insert
-                        .entry(cell)
+                Self::explode_level_zero_geo(item, shape, cells_vec, belly_vec)?;
+                for cell in cells_vec {
+                    cells_map
+                        .entry(*cell)
                         .or_insert_with(RoaringBitmap::new)
                         .insert(item);
                 }
-                for cell in belly {
-                    belly_cells
-                        .entry(cell)
+                for cell in belly_vec {
+                    belly_map
+                        .entry(*cell)
                         .or_insert_with(RoaringBitmap::new)
                         .insert(item);
                 }
@@ -267,7 +271,7 @@ impl Cellulite {
                 Ok(())
             })?;
         progress.update(InsertItemsAtLevelZeroSteps::MergeCellsMap);
-        let (to_insert, belly) = tls
+        let (to_insert, belly) = tls_maps
             .into_iter()
             .par_bridge()
             .map(|refcell| refcell.into_inner())
@@ -314,24 +318,27 @@ impl Cellulite {
         Ok(())
     }
 
-    fn explode_level_zero_geo(shape: Zerometry) -> Result<(Vec<CellIndex>, Vec<CellIndex>), Error> {
+    fn explode_level_zero_geo(
+        // only used for error handling
+        item: ItemId,
+        shape: Zerometry,
+        cells: &mut Vec<CellIndex>,
+        belly: &mut Vec<CellIndex>,
+    ) -> Result<()> {
         match shape {
             Zerometry::Point(point) => {
                 let cell = LatLng::new(point.lat(), point.lng())
                     .unwrap()
                     .to_cell(Resolution::Zero);
-                Ok((vec![cell], vec![]))
+                cells.push(cell);
             }
             Zerometry::MultiPoints(multi_point) => {
-                let to_insert = multi_point
-                    .points()
-                    .map(|point| {
-                        LatLng::new(point.lat(), point.lng())
-                            .unwrap()
-                            .to_cell(Resolution::Zero)
-                    })
-                    .collect();
-                Ok((to_insert, vec![]))
+                for point in multi_point.points() {
+                    let cell = LatLng::new(point.lat(), point.lng())
+                        .unwrap()
+                        .to_cell(Resolution::Zero);
+                    cells.push(cell);
+                }
             }
             Zerometry::Polygon(polygon) => {
                 let mut tiler = TilerBuilder::new(Resolution::Zero)
@@ -339,37 +346,33 @@ impl Cellulite {
                     .build();
                 tiler.add(polygon.to_geo())?;
 
-                let mut to_insert = Vec::new();
-                let mut belly_cells = Vec::new();
                 for cell in tiler.into_coverage() {
                     // If the cell is entirely contained in the polygon, insert directly to belly_cell_db
                     let cell_polygon = MultiPolygon::from(cell);
                     if polygon.contains(&cell_polygon) {
-                        belly_cells.push(cell);
+                        belly.push(cell);
                     } else {
                         // Otherwise use insert_shape_in_cell for partial overlaps
-                        to_insert.push(cell);
+                        cells.push(cell);
                     }
                 }
-                Ok((to_insert, belly_cells))
             }
             Zerometry::MultiPolygon(multi_polygon) => {
-                let mut to_insert = Vec::new();
-                let mut belly_cells = Vec::new();
                 for polygon in multi_polygon.polygons() {
-                    let (cells, belly) = Self::explode_level_zero_geo(polygon.into())?;
-                    to_insert.extend(cells);
-                    belly_cells.extend(belly);
+                    Self::explode_level_zero_geo(item, polygon.into(), cells, belly)?;
                 }
-                Ok((to_insert, belly_cells))
             }
             Zerometry::Line(line) => {
                 let mut plotter = PlotterBuilder::new(Resolution::Zero).build();
                 plotter.add_batch(line.to_geo().lines()).unwrap();
 
-                let to_insert = plotter.plot().collect::<Result<Vec<_>, _>>().unwrap();
+                for cell in plotter.plot() {
+                    let ret_cells = cell.map_err(|err| {
+                        Error::CannotConvertLineToCell(item, err, format!("{line:?}"))
+                    })?;
 
-                Ok((to_insert, vec![]))
+                    cells.push(ret_cells);
+                }
             }
             Zerometry::MultiLines(multi_lines) => {
                 let mut plotter = PlotterBuilder::new(Resolution::Zero).build();
@@ -377,31 +380,42 @@ impl Cellulite {
                     plotter.add_batch(line.to_geo().lines()).unwrap();
                 }
 
-                let to_insert = plotter.plot().collect::<Result<Vec<_>, _>>().unwrap();
+                for cell in plotter.plot() {
+                    let ret_cells = cell.map_err(|err| {
+                        Error::CannotConvertLineToCell(item, err, format!("{multi_lines:?}"))
+                    })?;
 
-                Ok((to_insert, vec![]))
+                    cells.push(ret_cells);
+                }
             }
             Zerometry::Collection(collection) => {
-                let (mut insert, mut belly) =
-                    Self::explode_level_zero_geo(Zerometry::MultiPoints(collection.points()))?;
-                let (mut i, mut b) =
-                    Self::explode_level_zero_geo(Zerometry::MultiLines(collection.lines()))?;
-                insert.append(&mut i);
-                belly.append(&mut b);
-                let (mut i, mut b) =
-                    Self::explode_level_zero_geo(Zerometry::MultiPolygon(collection.polygons()))?;
-                insert.append(&mut i);
-                belly.append(&mut b);
+                Self::explode_level_zero_geo(
+                    item,
+                    Zerometry::MultiPoints(collection.points()),
+                    cells,
+                    belly,
+                )?;
+                Self::explode_level_zero_geo(
+                    item,
+                    Zerometry::MultiLines(collection.lines()),
+                    cells,
+                    belly,
+                )?;
+                Self::explode_level_zero_geo(
+                    item,
+                    Zerometry::MultiPolygon(collection.polygons()),
+                    cells,
+                    belly,
+                )?;
 
-                insert.sort_unstable();
+                cells.sort_unstable();
                 belly.sort_unstable();
 
-                insert.dedup();
+                cells.dedup();
                 belly.dedup();
-
-                Ok((insert, belly))
             }
-        }
+        };
+        Ok(())
     }
 
     /// To insert a bunch of items in a cell we have to:

@@ -1,4 +1,4 @@
-use h3o::error::{InvalidGeometry, InvalidLatLng};
+use h3o::error::{InvalidGeometry, InvalidLatLng, PlotterError};
 
 use crate::{ItemId, metadata::Version};
 
@@ -34,8 +34,10 @@ pub enum Error {
     InvalidGeoJson(#[from] Box<geojson::Error>),
 
     // Internal errors
-    #[error("Internal error: unexpected document id `{0}` missing at `{1}`")]
+    #[error("unexpected document id `{0}` missing at `{1}`")]
     InternalDocIdMissing(ItemId, String),
+    #[error("Error with document `{0}`, could not convert it's line(s) to cells because: {1}\n{2}")]
+    CannotConvertLineToCell(ItemId, PlotterError, String),
 }
 
 #[macro_export]
