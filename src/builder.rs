@@ -431,22 +431,22 @@ impl Cellulite {
         wtxn: &mut RwTxn,
         cancel: &(impl Fn() -> bool + Send + Sync),
         items: RoaringBitmap,
-        cell: CellIndex,
+        parent_cell: CellIndex,
         frozen_items: &FrozenItems<'static>,
     ) -> Result<()> {
         // 1. If we cannot increase the resolution, we are done
-        let Some(children_cells) = get_children_cells(cell)? else {
+        let Some(children_cells) = get_children_cells(parent_cell)? else {
             return Ok(());
         };
         // 2.
         let mut to_insert = HashMap::with_capacity(children_cells.len());
         let mut to_insert_in_belly = HashMap::new();
 
-        for &cell in children_cells.iter() {
+        for &child_cell in children_cells.iter() {
             if cancel() {
                 return Err(Error::BuildCanceled);
             }
-            let cell_shape = get_cell_shape(cell);
+            let cell_shape = get_cell_shape(child_cell);
             for item in items.iter() {
                 let shape = frozen_items
                     .get(item)
@@ -461,11 +461,13 @@ impl Cellulite {
                 );
                 if relation.strict_contains.unwrap_or_default() {
                     let entry = to_insert_in_belly
-                        .entry(cell)
+                        .entry(child_cell)
                         .or_insert_with(RoaringBitmap::new);
                     entry.insert(item);
                 } else if relation.any_relation() {
-                    let entry = to_insert.entry(cell).or_insert_with(RoaringBitmap::new);
+                    let entry = to_insert
+                        .entry(child_cell)
+                        .or_insert_with(RoaringBitmap::new);
                     entry.insert(item);
                 }
             }
