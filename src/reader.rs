@@ -9,7 +9,7 @@ use heed::RoTxn;
 use roaring::RoaringBitmap;
 use zerometry::RelationBetweenShapes;
 
-use crate::{Cellulite, Result, keys::Key};
+use crate::{Cellulite, Result};
 
 impl Cellulite {
     pub fn in_shape(&self, rtxn: &RoTxn, polygon: &Polygon) -> Result<RoaringBitmap> {
@@ -52,8 +52,8 @@ impl Cellulite {
                 continue;
             }
 
-            let cell_items = self.cell_db().get(rtxn, &Key::Cell(cell))?;
-            let belly_items = self.cell_db().get(rtxn, &Key::Belly(cell))?;
+            let (cell_items, belly_items) =
+                crate::keys::retrieve_cell_and_belly(rtxn, &self.cell_db(), cell)?;
 
             if cell_items.is_none() && belly_items.is_none() {
                 (inspector)((FilteringStep::NotPresentInDB, cell));

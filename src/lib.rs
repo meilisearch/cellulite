@@ -15,7 +15,7 @@ use metadata::{Version, VersionCodec};
 
 mod builder;
 mod error;
-mod keys;
+pub(crate) mod keys;
 mod metadata;
 pub mod reader;
 pub mod roaring;

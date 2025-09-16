@@ -2,9 +2,13 @@ use std::borrow::Cow;
 
 use h3o::CellIndex;
 use heed::{
+    RoTxn,
     byteorder::{BE, BigEndian, ByteOrder},
     types::U64,
 };
+use roaring::RoaringBitmap;
+
+use crate::CellDb;
 
 /// Codec used to encode and decode the item id in the item database.
 ///
@@ -114,6 +118,28 @@ impl heed::BytesDecode<'_> for CellIndexCodec {
         let cell = BigEndian::read_u64(bytes);
         Ok(cell.try_into()?)
     }
+}
+
+pub(crate) fn retrieve_cell_and_belly(
+    rtxn: &RoTxn,
+    db: &CellDb,
+    cell_index: CellIndex,
+) -> Result<(Option<RoaringBitmap>, Option<RoaringBitmap>), heed::Error> {
+    let mut cell = None;
+    let mut belly = None;
+    let iter = db
+        .remap_key_type::<U64<BE>>()
+        .prefix_iter(rtxn, &(cell_index.into()))?
+        .remap_key_type::<CellKeyCodec>();
+    for ret in iter {
+        let (key, value) = ret?;
+        match key {
+            Key::Cell(_) => cell = Some(value),
+            Key::Belly(_) => belly = Some(value),
+        }
+    }
+
+    Ok((cell, belly))
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
