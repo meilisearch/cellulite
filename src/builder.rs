@@ -1,10 +1,8 @@
 use std::{cell::RefCell, collections::HashMap, sync::atomic::Ordering};
 
 use crate::{
-    AtomicCellStep, AtomicItemStep, BuildSteps, ItemId, Result,
-    keys::{CellKeyCodec, KeyPrefixVariantCodec, KeyVariant, UpdateType},
-    metadata::Version,
-    pos,
+    AtomicCellStep, AtomicItemStep, BuildSteps, ItemId, Result, keys::UpdateType,
+    metadata::Version, pos,
 };
 use geo::MultiPolygon;
 use h3o::{
@@ -134,7 +132,6 @@ impl Cellulite {
 
     /// 1. We remove all the items by id of the items database
     /// 2. We do a scan of the whole cell database and remove the items from the bitmaps
-    /// 3. We do a scan of the whole belly_cell_db and remove the items from the bitmaps
     ///
     /// TODO: We could optimize 2 and 3 by diving into the cells and stopping early when one is empty
     fn remove_deleted_items(
@@ -149,7 +146,6 @@ impl Cellulite {
             pub enum RemoveDeletedItemsSteps {
                 RemoveDeletedItemsFromItemsDatabase,
                 RemoveDeletedItemsFromCellsDatabase,
-                RemoveDeletedItemsFromBellyCellsDatabase,
             }
         }
 
@@ -165,13 +161,9 @@ impl Cellulite {
         }
 
         progress.update(RemoveDeletedItemsSteps::RemoveDeletedItemsFromCellsDatabase);
-        atomic.store(0, Ordering::Relaxed);
+        let (atomic, step) = AtomicCellStep::new(self.cell_db().len(wtxn)?);
         progress.update(step.clone());
-        let mut iter = self
-            .cell_db()
-            .remap_key_type::<KeyPrefixVariantCodec>()
-            .prefix_iter_mut(wtxn, &KeyVariant::Cell)?
-            .remap_key_type::<CellKeyCodec>();
+        let mut iter = self.cell_db().iter_mut(wtxn)?;
         while let Some(ret) = iter.next() {
             if cancel() {
                 return Err(Error::BuildCanceled);
@@ -192,34 +184,6 @@ impl Cellulite {
             }
         }
         drop(iter);
-
-        progress.update(RemoveDeletedItemsSteps::RemoveDeletedItemsFromBellyCellsDatabase);
-        atomic.store(0, Ordering::Relaxed);
-        progress.update(step);
-        let mut iter = self
-            .cell_db()
-            .remap_key_type::<KeyPrefixVariantCodec>()
-            .prefix_iter_mut(wtxn, &KeyVariant::Belly)?
-            .remap_key_type::<CellKeyCodec>();
-        while let Some(ret) = iter.next() {
-            if cancel() {
-                return Err(Error::BuildCanceled);
-            }
-            let (key, mut bitmap) = ret?;
-            let len = bitmap.len();
-            bitmap -= &items;
-            let removed = len - bitmap.len();
-            atomic.fetch_add(removed, Ordering::Relaxed);
-
-            // safe because everything is owned
-            unsafe {
-                if bitmap.is_empty() {
-                    iter.del_current()?;
-                } else {
-                    iter.put_current(&key, &bitmap)?;
-                }
-            }
-        }
         Ok(())
     }
 

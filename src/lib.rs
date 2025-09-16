@@ -10,9 +10,7 @@ use heed::{
     byteorder::BE,
     types::{Bytes, U32},
 };
-use keys::{
-    CellKeyCodec, ItemKeyCodec, Key, KeyPrefixVariantCodec, KeyVariant, MetadataKey, UpdateType,
-};
+use keys::{CellKeyCodec, ItemKeyCodec, Key, MetadataKey, UpdateType};
 use metadata::{Version, VersionCodec};
 
 mod builder;
@@ -187,9 +185,12 @@ impl Cellulite {
     ) -> Result<impl Iterator<Item = Result<(CellIndex, RoaringBitmap), heed::Error>> + 'a> {
         Ok(self
             .cell
-            .remap_key_type::<KeyPrefixVariantCodec>()
-            .prefix_iter(rtxn, &KeyVariant::Cell)?
-            .remap_types::<CellKeyCodec, RoaringBitmapCodec>()
+            .iter(rtxn)?
+            .filter(|ret| {
+                ret.as_ref()
+                    // if there is an error we want to return it
+                    .map_or(true, |(key, _v)| matches!(key, Key::Cell(_)))
+            })
             .map(|res| {
                 res.map(|(key, bitmap)| {
                     let Key::Cell(cell) = key else { unreachable!() };
@@ -205,9 +206,12 @@ impl Cellulite {
     ) -> Result<impl Iterator<Item = Result<(CellIndex, RoaringBitmap), heed::Error>> + 'a> {
         Ok(self
             .cell
-            .remap_key_type::<KeyPrefixVariantCodec>()
-            .prefix_iter(rtxn, &KeyVariant::Belly)?
-            .remap_types::<CellKeyCodec, RoaringBitmapCodec>()
+            .iter(rtxn)?
+            .filter(|ret| {
+                ret.as_ref()
+                    // if there is an error we want to return it
+                    .map_or(true, |(key, _v)| matches!(key, Key::Belly(_)))
+            })
             .map(|res| {
                 res.map(|(key, bitmap)| {
                     let Key::Belly(cell) = key else {

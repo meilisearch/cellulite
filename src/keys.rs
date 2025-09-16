@@ -31,8 +31,8 @@ impl heed::BytesDecode<'_> for ItemKeyCodec {
 
 /// Codec used to encode and decode the cell id.
 ///
-/// - The first byte is used to indicate if it's a belly cell or a normal cell.
-/// - Then the cell is encoded as a u64
+/// - The cell is encoded as a u64
+/// - The next byte is used to indicate if it's a belly cell or a normal cell.
 /// - And finally there is some padding to align the roaring bitmap on 64 bits
 pub struct CellKeyCodec;
 
@@ -47,18 +47,18 @@ impl<'a> heed::BytesEncode<'a> for CellKeyCodec {
                 let capacity = size_of::<KeyVariant>() + size_of_val(cell);
                 let missing_to_align = ALIGNMENT - (capacity % ALIGNMENT);
                 ret = Vec::with_capacity(capacity + missing_to_align);
-                ret.push(KeyVariant::Cell as u8);
                 let output: u64 = (*cell).into();
                 ret.extend_from_slice(&output.to_be_bytes());
+                ret.push(KeyVariant::Cell as u8);
                 ret.extend(std::iter::repeat_n(0, missing_to_align));
             }
             Key::Belly(cell) => {
                 let capacity = size_of::<KeyVariant>() + size_of_val(cell);
                 let missing_to_align = ALIGNMENT - (capacity % ALIGNMENT);
                 ret = Vec::with_capacity(capacity + missing_to_align);
-                ret.push(KeyVariant::Belly as u8);
                 let output: u64 = (*cell).into();
                 ret.extend_from_slice(&output.to_be_bytes());
+                ret.push(KeyVariant::Belly as u8);
                 ret.extend(std::iter::repeat_n(0, missing_to_align));
             }
         }
@@ -70,17 +70,12 @@ impl heed::BytesDecode<'_> for CellKeyCodec {
     type DItem = Key;
 
     fn bytes_decode(bytes: &'_ [u8]) -> Result<Self::DItem, heed::BoxedError> {
+        let cell = BigEndian::read_u64(bytes);
+        let bytes = &bytes[std::mem::size_of_val(&cell)..];
         let variant = bytes[0];
-        let bytes = &bytes[std::mem::size_of_val(&variant)..];
         let key = match variant {
-            v if v == KeyVariant::Cell as u8 => {
-                let cell = BigEndian::read_u64(bytes);
-                Key::Cell(cell.try_into()?)
-            }
-            v if v == KeyVariant::Belly as u8 => {
-                let cell = BigEndian::read_u64(bytes);
-                Key::Belly(cell.try_into()?)
-            }
+            v if v == KeyVariant::Cell as u8 => Key::Cell(cell.try_into()?),
+            v if v == KeyVariant::Belly as u8 => Key::Belly(cell.try_into()?),
             _ => unreachable!(),
         };
         // In any case we can skip the padding
@@ -99,18 +94,6 @@ pub enum Key {
 pub enum KeyVariant {
     Cell = 1,
     Belly = 2,
-}
-
-pub struct KeyPrefixVariantCodec;
-
-impl<'a> heed::BytesEncode<'a> for KeyPrefixVariantCodec {
-    type EItem = KeyVariant;
-
-    fn bytes_encode(
-        variant: &'a Self::EItem,
-    ) -> Result<std::borrow::Cow<'a, [u8]>, heed::BoxedError> {
-        Ok(vec![*variant as u8].into())
-    }
 }
 
 pub struct CellIndexCodec;

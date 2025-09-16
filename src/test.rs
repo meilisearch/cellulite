@@ -7,10 +7,7 @@ use heed::{Env, EnvOpenOptions, RoTxn, WithTls};
 use steppe::NoProgress;
 use tempfile::TempDir;
 
-use crate::{
-    CellKeyCodec, Cellulite, ItemId, Key, KeyPrefixVariantCodec, KeyVariant,
-    roaring::RoaringBitmapCodec,
-};
+use crate::{Cellulite, ItemId, Key};
 
 pub struct DatabaseHandle {
     pub env: Env<WithTls>,
@@ -42,43 +39,33 @@ impl DatabaseHandle {
             s.push_str(&format!("{key}: {value:?}\n"));
         }
 
-        s.push_str("# Cells\n");
-        let iter = self
-            .database
-            .cell
-            .remap_types::<KeyPrefixVariantCodec, RoaringBitmapCodec>()
-            .prefix_iter(rtxn, &KeyVariant::Cell)
-            .unwrap()
-            .remap_key_type::<CellKeyCodec>();
-        for ret in iter {
+        let mut cells = Vec::new();
+        let mut belly = Vec::new();
+        for ret in self.database.cell.iter(rtxn).unwrap() {
             let (key, value) = ret.unwrap();
-            let Key::Cell(cell) = key else { unreachable!() };
+            match key {
+                Key::Cell(cell_index) => cells.push((cell_index, value)),
+                Key::Belly(cell_index) => belly.push((cell_index, value)),
+            }
+        }
+
+        s.push_str("# Cells\n");
+        for (cell, bitmap) in cells {
             let lat_lng = LatLng::from(cell);
             let (lat, lng) = (lat_lng.lat(), lat_lng.lng());
             let res = cell.resolution();
             s.push_str(&format!(
-                "Cell {{ res: {res}, center: ({lat:.4}, {lng:.4}) }}: {value:?}\n"
+                "Cell {{ res: {res}, center: ({lat:.4}, {lng:.4}) }}: {bitmap:?}\n"
             ));
         }
 
         s.push_str("# Belly Cells\n");
-        let iter = self
-            .database
-            .cell
-            .remap_types::<KeyPrefixVariantCodec, RoaringBitmapCodec>()
-            .prefix_iter(rtxn, &KeyVariant::Belly)
-            .unwrap()
-            .remap_key_type::<CellKeyCodec>();
-        for ret in iter {
-            let (key, value) = ret.unwrap();
-            let Key::Belly(cell) = key else {
-                unreachable!()
-            };
+        for (cell, bitmap) in belly {
             let lat_lng = LatLng::from(cell);
             let (lat, lng) = (lat_lng.lat(), lat_lng.lng());
             let res = cell.resolution();
             s.push_str(&format!(
-                "Cell {{ res: {res}, center: ({lat:.4}, {lng:.4}) }}: {value:?}\n"
+                "Cell {{ res: {res}, center: ({lat:.4}, {lng:.4}) }}: {bitmap:?}\n"
             ));
         }
 
