@@ -116,7 +116,14 @@ impl Cellulite {
             if bitmap.len() < self.threshold || bitmap.intersection_len(&inserted_items) == 0 {
                 continue;
             }
-            self.insert_chunk_of_items_recursively(wtxn, cancel, bitmap, cell, &frozen_items)?;
+            self.insert_chunk_of_items_recursively(
+                wtxn,
+                cancel,
+                inserted_items.clone(),
+                bitmap,
+                cell,
+                &frozen_items,
+            )?;
         }
 
         progress.update(BuildSteps::UpdateTheMetadata);
@@ -430,7 +437,8 @@ impl Cellulite {
         &self,
         wtxn: &mut RwTxn,
         cancel: &(impl Fn() -> bool + Send + Sync),
-        items: RoaringBitmap,
+        items_in_current_cell: RoaringBitmap,
+        items_to_insert: RoaringBitmap,
         parent_cell: CellIndex,
         frozen_items: &FrozenItems<'static>,
     ) -> Result<()> {
@@ -447,7 +455,7 @@ impl Cellulite {
                 return Err(Error::BuildCanceled);
             }
             let cell_shape = get_cell_shape(child_cell);
-            for item in items.iter() {
+            for item in items_to_insert.iter() {
                 let shape = frozen_items
                     .get(item)
                     .ok_or_else(|| Error::InternalDocIdMissing(item, pos!()))?;
@@ -490,17 +498,18 @@ impl Cellulite {
             if cancel() {
                 return Err(Error::BuildCanceled);
             }
-            let original_bitmap = self
-                .cell_db()
-                .get(wtxn, &Key::Cell(cell))?
-                .unwrap_or_default();
-            let new_bitmap = &original_bitmap | &items_to_insert;
+            let original_bitmap = self.cell_db().get(wtxn, &Key::Cell(cell))?;
+            let new_bitmap =
+                original_bitmap.as_ref().unwrap_or(&Default::default()) | &items_to_insert;
             self.cell_db().put(wtxn, &Key::Cell(cell), &new_bitmap)?;
-            if original_bitmap.len() >= self.threshold {
+            if let Some(ref original_bitmap) = original_bitmap
+                && original_bitmap.len() >= self.threshold
+            {
                 // if we were already too large we can immediately jump to the next resolution
                 self.insert_chunk_of_items_recursively(
                     wtxn,
                     cancel,
+                    original_bitmap.clone(),
                     items_to_insert,
                     cell,
                     frozen_items,
@@ -508,6 +517,8 @@ impl Cellulite {
             } else if new_bitmap.len() >= self.threshold {
                 let cell_shape = get_cell_shape(cell);
                 let mut belly_items = RoaringBitmap::new();
+                let original_bitmap =
+                    original_bitmap.unwrap_or_else(|| items_in_current_cell.clone());
 
                 // If we just became too large, we have to retrieve the items that were already in the database insert them at the next resolution
                 for item_id in original_bitmap.iter() {
@@ -540,6 +551,7 @@ impl Cellulite {
                 self.insert_chunk_of_items_recursively(
                     wtxn,
                     cancel,
+                    RoaringBitmap::new(),
                     items_to_insert,
                     cell,
                     frozen_items,
