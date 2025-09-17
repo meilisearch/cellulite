@@ -1,4 +1,4 @@
-use h3o::error::{InvalidGeometry, InvalidLatLng, PlotterError};
+use h3o::error::{InvalidGeometry, PlotterError};
 
 use crate::{ItemId, metadata::Version};
 
@@ -7,12 +7,6 @@ pub enum Error {
     // User errors
     #[error("The build was canceled")]
     BuildCanceled,
-    #[error("Document with id `{0}` contains a {1} but only `Geometry` type is supported")]
-    InvalidGeoJsonTypeFormat(ItemId, &'static str),
-    #[error(
-        "Document with id `{0}` contains a {1} but only `Point`, `Polygon`, `MultiPoint` and `MultiPolygon` types are supported"
-    )]
-    InvalidGeometryTypeFormat(ItemId, &'static str),
     #[error(
         "Version mismatch while building, was expecting v{} but instead got v{}. Upgrade the version before building.",
         Version::default(), .0
@@ -26,8 +20,6 @@ pub enum Error {
     // External errors, sometimes it's a user error and sometimes it's not
     #[error(transparent)]
     Heed(#[from] heed::Error),
-    #[error(transparent)]
-    InvalidLatLng(#[from] InvalidLatLng),
     #[error(transparent)]
     InvalidGeometry(#[from] InvalidGeometry),
     #[error(transparent)]
