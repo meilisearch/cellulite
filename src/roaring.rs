@@ -16,7 +16,7 @@ impl heed::BytesDecode<'_> for RoaringBitmapCodec {
 impl heed::BytesEncode<'_> for RoaringBitmapCodec {
     type EItem = RoaringBitmap;
 
-    fn bytes_encode(item: &Self::EItem) -> Result<Cow<[u8]>, BoxedError> {
+    fn bytes_encode(item: &Self::EItem) -> Result<Cow<'_, [u8]>, BoxedError> {
         const ALIGNMENT: usize = std::mem::size_of::<f64>();
         let mut bytes = Vec::with_capacity(item.serialized_size());
         item.serialize_into(&mut bytes)?;

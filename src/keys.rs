@@ -100,26 +100,6 @@ pub enum KeyVariant {
     Belly = 2,
 }
 
-pub struct CellIndexCodec;
-
-impl<'a> heed::BytesEncode<'a> for CellIndexCodec {
-    type EItem = CellIndex;
-
-    fn bytes_encode(cell: &'a Self::EItem) -> Result<std::borrow::Cow<'a, [u8]>, heed::BoxedError> {
-        let output: u64 = (*cell).into();
-        Ok(output.to_be_bytes().to_vec().into())
-    }
-}
-
-impl heed::BytesDecode<'_> for CellIndexCodec {
-    type DItem = CellIndex;
-
-    fn bytes_decode(bytes: &'_ [u8]) -> Result<Self::DItem, heed::BoxedError> {
-        let cell = BigEndian::read_u64(bytes);
-        Ok(cell.try_into()?)
-    }
-}
-
 pub(crate) fn retrieve_cell_and_belly(
     rtxn: &RoTxn,
     db: &CellDb,

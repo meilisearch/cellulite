@@ -1,4 +1,4 @@
-use std::{fmt, ops::Deref};
+use std::ops::Deref;
 
 use geo::{GeometryCollection, point, polygon};
 use geojson::{FeatureCollection, GeoJson};
@@ -7,7 +7,7 @@ use heed::{Env, EnvOpenOptions, RoTxn, WithTls};
 use steppe::NoProgress;
 use tempfile::TempDir;
 
-use crate::{Cellulite, ItemId, Key};
+use crate::{Cellulite, Key};
 
 pub struct DatabaseHandle {
     pub env: Env<WithTls>,
@@ -89,22 +89,6 @@ fn create_database() -> DatabaseHandle {
         env,
         database: cellulite,
         tempdir: dir,
-    }
-}
-
-pub struct NnRes(pub Option<Vec<(ItemId, (f64, f64))>>);
-
-impl fmt::Display for NnRes {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Some(ref vec) => {
-                for (id, (lat, lng)) in vec {
-                    writeln!(f, "id({id}): coord({lat:.5}, {lng:.5})")?;
-                }
-                Ok(())
-            }
-            None => f.write_str("No results found"),
-        }
     }
 }
 

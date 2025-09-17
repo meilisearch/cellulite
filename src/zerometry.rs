@@ -18,7 +18,7 @@ impl<'a> heed::BytesDecode<'a> for ZerometryCodec {
 impl heed::BytesEncode<'_> for ZerometryCodec {
     type EItem = Geometry;
 
-    fn bytes_encode(item: &Self::EItem) -> Result<Cow<[u8]>, BoxedError> {
+    fn bytes_encode(item: &Self::EItem) -> Result<Cow<'_, [u8]>, BoxedError> {
         let mut bytes = Vec::new();
         Zerometry::write_from_geometry(&mut bytes, item)?;
         Ok(Cow::Owned(bytes))
