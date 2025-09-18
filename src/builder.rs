@@ -87,9 +87,17 @@ impl Cellulite {
         // 1.
         let (inserted_items, removed_items) =
             self.retrieve_and_clear_updated_items(wtxn, cancel, progress)?;
+        if inserted_items.is_empty() && removed_items.is_empty() {
+            self.set_version(wtxn, &Version::default())?;
+            return Ok(());
+        }
 
         // 2.
         self.remove_deleted_items(wtxn, cancel, progress, removed_items)?;
+        if inserted_items.is_empty() {
+            self.set_version(wtxn, &Version::default())?;
+            return Ok(());
+        }
 
         // 3.0
         let frozen_items = self.retrieve_frozen_items(wtxn, cancel)?;
