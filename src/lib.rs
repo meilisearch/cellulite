@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use ::roaring::RoaringBitmap;
 use ::zerometry::Zerometry;
+use geo::{Densify, Geometry, Haversine};
 use geojson::GeoJson;
 use h3o::{CellIndex, Resolution};
 use heed::{
@@ -301,4 +302,38 @@ pub struct Stats {
     pub total_items: usize,
     pub cells_by_resolution: BTreeMap<Resolution, usize>,
     pub belly_cells_by_resolution: BTreeMap<Resolution, usize>,
+}
+
+pub fn densify_geom(geom: &mut Geometry) {
+    match geom {
+        Geometry::Line(line) => {
+            *geom = Geometry::LineString(
+                Haversine.densify(&geo_types::LineString(vec![line.start, line.end]), 10_000.0),
+            );
+        }
+        Geometry::LineString(line_string) => {
+            *line_string = Haversine.densify(line_string, 10_000.0);
+        }
+        Geometry::Polygon(polygon) => {
+            *polygon = Haversine.densify(polygon, 10_000.0);
+        }
+        Geometry::MultiLineString(multi_line_string) => {
+            *multi_line_string = Haversine.densify(multi_line_string, 10_000.0);
+        }
+        Geometry::MultiPolygon(multi_polygon) => {
+            *multi_polygon = Haversine.densify(multi_polygon, 10_000.0);
+        }
+        Geometry::GeometryCollection(geometry_collection) => {
+            for geom in geometry_collection.0.iter_mut() {
+                densify_geom(geom);
+            }
+        }
+        Geometry::Rect(rect) => {
+            *geom = Geometry::Polygon(Haversine.densify(rect, 10_000.0));
+        }
+        Geometry::Triangle(triangle) => {
+            *geom = Geometry::Polygon(Haversine.densify(triangle, 10_000.0));
+        }
+        _ => (),
+    };
 }
