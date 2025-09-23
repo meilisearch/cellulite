@@ -3,10 +3,10 @@ use geo::polygon;
 use steppe::NoProgress;
 
 #[test]
-fn from_0_2_0() {
+fn from_0_3_0() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(
-        "tests/assets/v0_2_0.mdb/data.mdb",
+        "tests/assets/v0_3_0.mdb/data.mdb",
         dir.path().join("data.mdb"),
     )
     .unwrap();
@@ -19,7 +19,7 @@ fn from_0_2_0() {
     };
     let mut wtxn = env.write_txn().unwrap();
     let cellulite = Cellulite::create_from_env(&env, &mut wtxn, "cellulite").unwrap();
-    insta::assert_snapshot!(cellulite.get_version(&wtxn).unwrap(), @"0.2.0");
+    insta::assert_snapshot!(cellulite.get_version(&wtxn).unwrap(), @"0.3.0");
 
     // This matches only a subset of the multi-point containing all the trees
     let trees = polygon![
@@ -37,11 +37,11 @@ fn from_0_2_0() {
 
     // This matches my desk (a point) which is contained in the movie theater
     let desk = polygon![
-         (x: 3.607173442840576, y: 43.991546630859375),
-         (x: 3.607184648513794, y: 43.99155807495117),
-         (x: 3.6071949005126953, y: 43.99154281616211),
-         (x: 3.607174873352051, y: 43.99154281616211),
-         (x: 3.607173442840576, y: 43.991546630859375)
+        (x: 3.6071739196777344, y: 43.99156188964844),
+        (x: 3.607184648513794, y: 43.99156951904297),
+        (x: 3.6072075366973877, y: 43.991554260253906),
+        (x: 3.6071901321411133, y: 43.99154281616211),
+        (x: 3.6071739196777344, y: 43.99156188964844)
     ];
 
     let ret = cellulite.in_shape(&wtxn, &desk).unwrap();
