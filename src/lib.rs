@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use core::f64;
 use std::collections::BTreeMap;
 
