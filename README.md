@@ -1,4 +1,4 @@
-<p align="center"><img width="280px" title="The cellulite logo is the text: 'cellulite' with cheeks on the left" src="https://raw.githubusercontent.com/meilisearch/deserr/main/assets/deserr.png"></a>
+<p align="center"><img width="280px" title="The cellulite logo is the text: 'cellulite' with cheeks on the left" src="https://raw.githubusercontent.com/meilisearch/cellulite/main/logo.png"></a>
 <h1 align="center">cellulite</h1>
 
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE-MIT)
