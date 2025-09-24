@@ -107,23 +107,29 @@ let _doc_ids = cellulite.in_circle(&rtxn, point! { x: 181.2, y: 51.79 }, 1000.0,
 
 ## Performances
 
-One big subject that always come back is;
+One big subject that always comes back is;
 
-> Ok that's cool but what about the performances???
+> Ok, that's cool, but what about the performances???
 
-So, I just ran some indexing processes on my personal macbook pro 2021 - M1 max.
-It's using the original SSD nvme of the mac, and the mac is plugged in.
+So, I just ran some indexing processes on my personal MacBook Pro 2021 - M1 Max.
+It's using the original SSD NVMe of the Mac, and the Mac is plugged in.
 
-| Dataset                                                                         | Time to index | Time to search inside a single parcel (about 10m^2) | Time to search in a few blocks (2km^2) | Time to search a very large region (80mk^2) |
-| ----------                                                                      | ------------- | --------------------------------------------------- | -------------------------------------- | ------------------------------------------- |
-| Indexing **3699966** parcels of the densest part of france around paris.        | 6m 25s        | 1.13ms for 1 match                                  | 6.46ms for 2_633 matches               | 39ms for 77_482 matches                     |
-| Indexing **952254** parcels around Lyon, a large city in France                 | 1m 41s        | 700us for 1 match                                   | 2.61ms for 514 matches                 | 51ms for 39_518 matches                     |
-| Indexing **594362** parcels in Lozère, a practically empty department of France | 1m 03s        | 836us for 1 match                                   | 2.82ms for 273 matches                 | 23.32ms for 4_565 matches                   |
+| Dataset                                                                           | Time to index | Time to search inside a single parcel (about 10m^2) | Time to search in a few blocks (2km^2) | Time to search a very large region (80mk^2) |
+| --------------------------------------------------------------------------------  | ------------- | --------------------------------------------------- | -------------------------------------- | ------------------------------------------- |
+| Indexing **3\_699\_966** parcels of the densest part of France around Paris.      | 6m 25s        | 1.13ms for 1 match                                  | 6.46ms for 2_633 matches               | 39ms for 77_482 matches                     |
+| Indexing **952\_254** parcels around Lyon, a large city in France                 | 1m 41s        | 700us for 1 match                                   | 2.61ms for 514 matches                 | 51ms for 39_518 matches                     |
+| Indexing **594\_362** parcels in Lozère, a practically empty department of France | 1m 03s        | 836us for 1 match                                   | 2.82ms for 273 matches                 | 23.32ms for 4_565 matches                   |
 
+## Internals for contributors and maintainers
 
-## Internals for contributors
+This part is dedicated to explaining the internal tools, algorithms and the few LMDB tricks we use.
 
-This part is dedicated to explaining the internal algorithms of cellulite and the few LMDB tricks we use.
+### Toolings
+
+TODO TODO
+- To index stuff
+- To display stuff
+TODO TODO
 
 ### How is the data stored
 
@@ -191,12 +197,59 @@ To organize the data like that, we have to go through a bunch of steps:
     and insert them in the children of the current cell, and call ourselves for all the cells that are too large.
 6. Repeat step 5 for all the cells that are too large
 
-Let's see together what the insertion of 1+M cadastre parcel would look like in one of the densest regions of the world: Île de France.
+Let's see together what the insertion of 3.6+M cadastre parcel looks like in one of the densest regions of the world: Île de France.
+
+1. After calling `build`, all the shapes are inserted at res0. Everything falls on only two cells. They are red because they're completely full.
+
+![](readme_assets/indexing_paris_res0.png)
+
+2. Then we iterate over all the "full" cells and split and partition them in their children.
+
+| Resolution |  Image                                      | Remark                                                                        |
+| ---------- | ------------------------------------------- | ----------------------------------------------------------------------------- |
+| 1          | ![](readme_assets/indexing_paris_res1.png)  | Even though we had two cells initially, we ended up with only one at the res1 |
+| 2          | ![](readme_assets/indexing_paris_res2.png)  | Pretty much the same, let's skip an iteration                                 |
+| 4          | ![](readme_assets/indexing_paris_res4.png)  | We're starting to see the shape of everything we've indexed appear            |
+| 7          | ![](readme_assets/indexing_paris_res7.png)  | Although most cells are still full (red), we're starting to see a lot of blue cells on the edges. Which means we're approaching the maximum resolution we'll reach |
+| 9          | ![](readme_assets/indexing_paris_res9.png)  | And finally, we can clearly see how the densest area of IdF still contains cells, while the majority of the department doesn't need to go any deeper |
+
+In the end we had to create 133\_849 cells to holds the 3\_699\_966 documents.
 
 ### Query
 
+Now we've seen how the data is laid out on disk, let's see how we can make a query against it.
 
+Internally, cellulite only allow one kind of query: Query that returns all the items contained, containing or intersecting with a specified polygon.
 
+And the algorithm goes as-is:
+1. Convert the query polygon to the cell we have to explore
+2. For all the cells we see:
+  1. Check if there is a corresponding belly cell in the DB. This guarantees we're
+    either intersecting or fully contained within a shape. We add all the IDs contained
+    in this belly cell to the matching items 
+  2. If there is a normal cell, we have multiple cases:
+    - The cell is entirely contained within our shape: We add its content to the items to return. No need to check what it contains it's guaranteed to be valid.
+    - The cell is not contained in our shape: We ignore it
+    - The cell doesn't exist in the database: We ignore it
+    - The cell intersects with our shape; two more cases are possible:
+      - The cell is full: We start back at step 2 with all its children
+      - The cell is not full: We add the items it contains to a list of items to double-check
+3. Then, we remove all the "validated" items that are guaranteed to be right from the list of items to double-check. There may be many duplicates.
+4. And finally, we retrieve and compare one by one all the items that are in the list of items to double-check
+
+As for the indexing process, let's see step by step how a query goes:
+
+| Resolution |  Image                                      | Remark                                                                        |
+| ---------- | ------------------------------------------- | ----------------------------------------------------------------------------- |
+| 0          | ![](readme_assets/query_paris_res0.png)     | At res 0, as you would expect we're simply retrieving all the cells covering our polygon |
+| 1          | ![](readme_assets/query_paris_res1.png)     | At res 1, though, you should notice I lied to you above. Instead of retrieving all the children of the current cell, we prefer to cover our shape at res+1 when the cells are way larger than our shape |
+| 7          | ![](readme_assets/query_paris_res7.png)     | This goes on till res 7, where our cell is still too large in comparison to our shape |
+| 8          | ![](readme_assets/query_paris_res8.png)     | At res 8 we're starting to validate a lot of cells that entirely fits within our shape. But we still need to dive in for the edges. The yellow cell means we cannot increase the resolution there and will have to double-check all the items it contains at the end |
+| 9          | ![](readme_assets/query_paris_res9.png)     | At res 9 it's the same except there is way more yellow cells to double-check. If you remember the cells we stored in the database earlier, that makes sense since we're close to the maximum resolution we stored there. Only one blue cell remains, let's increase the resolution one last time |
+| 10         | ![](readme_assets/query_paris_res10.png)    | On this last step, you can clearly see we didn't cheat and try to cover the whole shape at this res, this would generate approximately 1129 new cells to look up in the database. Instead, we only looked at the 17 children of the blue cell. The red ones were not part of our shape and have been ignored |
+
+This query matched 14_322 items and had to look up about 300 cells before starting
+to compare the items to double-check against the final shapes. On my computer, it ran in 11ms.
 
 ### Tricks
 
