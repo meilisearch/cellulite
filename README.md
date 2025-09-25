@@ -253,6 +253,80 @@ to compare the items to double-check against the final shapes. On my computer, i
 
 ### Tricks
 
-- The normal and belly cells are stored with their keys at the end, this means at
-  search time we can retrieve both very quickly with an LMDB iter
-- Multiple database to be able to write while we read
+The cellulite code is pretty straightforward when it comes to storage. It's almost exclusively simple `get` and `put`.
+In this part, we'll see the very few tricks I used:
+
+#### Retrieving cells faster
+
+Something you may have noticed in the search algorithm is that we're always retrieving both the
+"normal" cell and the belly cell.
+To improve the locality, I'm storing both cells close to each other in LMDB by putting
+their "tag" at the end of the u64 representing the cell.
+This means we can't `prefix_iter` on all normal or belly cells; we'll always get both.
+Theoretically, this should also slightly help at indexing time.
+
+#### Zerocopy operations
+
+Something else we never did before in meilisearch is working on aligned values.
+We're doing it in cellulite.
+To get an aligned value from LMDB, the trick is to align both your keys and values on the
+alignment you want.
+This means, even though my keys are a single u32, in cellulite I need an
+alignment on 64 bits, and I have to write my keys on 64 bits.
+
+```rust
+pub struct ItemKeyCodec;
+
+impl heed::BytesEncode<'_> for ItemKeyCodec {
+    type EItem = u32;
+
+    fn bytes_encode(item: &'_ Self::EItem) -> Result<std::borrow::Cow<'_, [u8]>, heed::BoxedError> {
+        let aligned_item = *item as u64;
+        Ok(Cow::from(aligned_item.to_be_bytes().to_vec()))
+    }
+}
+
+impl heed::BytesDecode<'_> for ItemKeyCodec {
+    type DItem = u32;
+
+    fn bytes_decode(bytes: &'_ [u8]) -> Result<Self::DItem, heed::BoxedError> {
+        U64::<BE>::bytes_decode(bytes).map(|n| n as u32)
+    }
+}
+```
+
+#### Getting rid of the prefix_iter + del_current
+
+In arroy, we noticed that storing the updated items in a roaring bitmap was slowing
+us down immensely, so we started storing the updated items as single LMDB keys.
+This made item insertion way faster and retrieval slightly slower, but overall
+we still measured a good x10 improvement when inserting millions of documents.
+
+The pattern to retrieve the updated docid was then to `prefix_iter` on the updated
+items, store them in a roaring bitmap, and at the same time, remove them with `del_current`.
+Even though this looks quick, LMDB is constantly trying to re-equilibrate its tree
+while we're iterating, and that could end up taking literal hours of time when adding
+dozens of millions of documents at once.
+
+The way I made this process go from 4h+ to 20 minutes was by putting the updated
+documents in their own database. We can then do a simple `iter` instead of a `prefix_iter`.
+But the real gain comes from the fact that instead of removing the elements one by one and
+having to equilibrate the tree again and again, we can just clear the whole database at the
+end.
+
+#### Reading while writing
+
+And the last but not least trick is how I'm writing in LMDB while reading.
+In arroy we introduced the concept of "FrozenItems" (or frozzen because I can't type):
+This is a structure that retrieves all the keys and values from LMDB beforehand in an
+hashmap.
+And then, as long as we don't write anything to LMDB, all the pointers we retrieved
+stays valid.
+In cellulite, I noticed that writing in a database only invalidates the values of
+this database.
+This means by having one database for the items and one database for the data structure
+I could freeze the items while I'm writing in the cells.
+
+This is not supported by heed at all currently, and can't be since the `Database` type
+is `Copy`.
+We would need the values to be linked both to their txn and their database.
