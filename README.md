@@ -124,12 +124,201 @@ It's using the original SSD NVMe of the Mac, and the Mac is plugged in.
 
 This part is dedicated to explaining the internal tools, algorithms and the few LMDB tricks we use.
 
+### Cloning this repository
+
+I pushed the dataset used in my benchmarks under Git LFS references stored in the `assets` directory.
+So if you don't plan on running the benchmarks, you can skip their download by adding
+`GIT_LFS_SKIP_SMUDGE=1` to your cloning command:
+```bash
+# with gh
+GIT_LFS_SKIP_SMUDGE=1 gh repo clone meilisearch/cellulite
+
+# with git
+GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/meilisearch/cellulite
+```
+
+FYI, there are about 12GiB of datasets in the repo.
+
 ### Toolings
 
-TODO TODO
-- To index stuff
-- To display stuff
-TODO TODO
+#### Indexing stuff and benchmarking
+
+I made a crate that I use both to index data in a database I'll explore later, or
+to benchmark the search query/profile.
+It's the `benchmark` crate, the `--help` is pretty self-explanatory:
+
+```text
+Usage: benchmarks [OPTIONS]
+
+Options:
+  -d, --dataset <DATASET>
+          Name of the dataset to use
+
+          [default: shop]
+
+          Possible values:
+          - shop:              100_000 points representing shops in France
+          - paris-voies:       25_038 lines representing road section in Paris
+          - cadastre-addr:     22_000_000 points representing houses and buildings in France
+          - cadastre-parcelle: With the selector you can chose a department in france with its number
+          - canton
+          - arrondissement
+          - commune
+          - departement
+          - region:            13 regions in France
+          - zone:              Mix of all the canton, arrondissement, commune, departement and region
+
+      --selector <SELECTOR>
+          Selector to use for the dataset, will do something different for each dataset
+
+      --no-indexing
+          Skip indexing altogether and only benchmark the search requests. You must provide the path to a database
+
+      --no-insert
+          Skip inserting the items, can be useful if you already inserted the items with skip_build and only want to benchmark the build process
+
+      --no-build
+          Don't build the index after inserting the items
+
+      --no-commit
+          Don't commit after the operation, can be useful to benchmark only the build part of the indexing process without having to make the insertion again
+
+      --no-queries
+          Skip query if set
+
+      --index-metadata
+          Index metadata if set. Only valid if skip_indexing is false. This will create a new database for the metadata which will significantly slow down the indexing process. It should not be set when doing actual benchmarks. It also consume a lot of memory as we must stores all the strings of the whole dataset in memory
+
+      --limit <LIMIT>
+          Set the number of items to index, will be capped at the number of items in the dataset
+
+      --db <DB>
+          Db path, if not provided, a temporary directory will be used and freed at the end of the benchmark
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+The command I use the most is this one:
+```
+cargo run -p benchmarks --release -- --dataset cadastre-parcelle --no-queries --db lyon.mdb --selector 69
+```
+
+It takes the datasets containing all the parcels of the French cadastre, and don't run the query benchmarks,
+set the DB path to `lyon.mdb` and finally select the `69` department of France, which contains the city of Lyon.
+
+This will display a live report of the indexing process:
+```text
+Starting...
+Deserialized the points in 94.208µs
+Database setup
+Inserting points
+Importing assets/cadastre_parcelle/69.json.gz
+Inserted 255531 additional points in 1.00s, throughput: 255530.45 points / seconds || In total: 770163 points, started 20.82s ago, throughput: 36989.68 points / seconds
+Inserted 952254 points in 21.53s. Throughput: 44234.79 points / seconds
+Building the index...
+{
+{
+  "steps": [],
+  "percentage": 0.0,
+  "duration": "1m 42s 16ms 984µs"
+}
+retrieve updated items > item => total: 166ms 142µs (0.16%) self: 166ms 142µs (0.16%)
+retrieve updated items => total: 166ms 142µs (0.16%) self: 0s (0.00%)
+clear updated items => total: 25µs (0.00%) self: 25µs (0.00%)
+remove deleted items from database > remove deleted items from items database > item => total: 14µs (0.00%) self: 14µs (0.00%)
+remove deleted items from database > remove deleted items from items database => total: 15µs (0.00%) self: 1µs (0.00%)
+remove deleted items from database > remove deleted items from cells database > cell => total: 159ms 84µs (0.16%) self: 159ms 84µs (0.16%)
+remove deleted items from database > remove deleted items from cells database => total: 159ms 125µs (0.16%) self: 41µs (0.00%)
+remove deleted items from database => total: 159ms 146µs (0.16%) self: 21µs (0.00%)
+insert items at level zero > split items to cells > item => total: 2s 965ms 816µs (2.91%) self: 2s 965ms 816µs (2.91%)
+insert items at level zero > split items to cells => total: 2s 965ms 816µs (2.91%) self: 0s (0.00%)
+insert items at level zero > merge cells map => total: 185µs (0.00%) self: 185µs (0.00%)
+insert items at level zero > write cells to database > cell => total: 79µs (0.00%) self: 79µs (0.00%)
+insert items at level zero > write cells to database => total: 96µs (0.00%) self: 17µs (0.00%)
+insert items at level zero => total: 2s 966ms 164µs (2.91%) self: 2s 966ms 68µs (2.91%)
+insert items recursively => total: 1m 38s 593ms 957µs (96.71%) self: 1m 38s 593ms 957µs (96.71%)
+update the metadata => total: 59ms 234µs (0.06%) self: 59ms 234µs (0.06%)
+Finished in 1m 41s 944ms 703µs
+```
+
+#### How to inspect the content of a database
+
+I heavily relied on the `display` crate, which is in the `examples/display` directory, to debug during development.
+It has no usage but takes only one optional argument: The database path.
+If you don't specify anything, it will create a temporary database that will be removed once the program exits.
+If you specify a database path, it opens it.
+
+> [!NOTE]  
+> Don't forget this program is mainly made to help you **debug** and understand your code. To help us understand
+> what's going on, it's loading the whole database in RAM and won't work with very large databases.
+
+The few things you need to know are located on the UI let's jump on everything that's included:
+
+![](readme_assets/display_general_ui.png)
+
+That's what you'll see after launching the crate. You need access to the network to load the map.
+You can scroll or drag the map wherever you want.
+
+But most options are on the right, we'll go through all categories together.
+
+##### Debug
+
+![](readme_assets/display_debug.png)
+
+This part is really here to help you debug what's stored in your database. From top to bottom:
+- You have the current position of the mouse
+- The position of the last **left click**, that's really handy when you're writing a test and need to copy and paste a location
+- Then, h3 cells are at the last position, all sorted by their resolution. It's clickable and brings you to the official H3 website
+- Then, there is a button to insert 1000 random points into the database. This can be useful when updating the indexing algorithm.
+- Another button to display the items in the database, that's probably the single most important button of this whole interface.
+  It helps you very quickly see if your filter is missing documents or not
+- And the last button is doing the same thing, but with the cells
+
+##### Insert
+
+![](readme_assets/display_insert.png)
+
+This part is dedicated to inserting documents into the database.
+That's very useful as well when you're trying to debug something or understand
+how the cells split themselves.
+
+> [!TIP]
+> Most of the time, you'll also want to reduce the threshold in src/lib.rs:95 to something easier to reach, like 3 instead of 200.
+
+There is not much to see here; you can name your shape to inspect it later.
+Then you must choose the kind of shape you want to insert; currently, only points, multi-points, and polygons are supported.
+Which means we're missing:
+- Multi-polygon
+- Lines
+- Multi-Lines
+- Collection
+
+After selecting one of these, you draw it on the map by pressing right-click for each point you want to insert.
+Once you're done, you click "complete", and the shape will be inserted.
+There is no validation for single points.
+
+##### Filter
+
+![](readme_assets/display_filter.png)
+
+Here's the most important category, the one that lets you filter documents!
+When you open it, you're just greeted with a "draw polygon" button.
+After clicking on the button, you have to draw your shape on the map with right clicks, similar to how you
+insert points.
+Then you can complete your polygon, and it'll run a query. This can take some time; the display part is
+often the slowest.
+Once done, you'll end up with something similar to the screenshot above, containing the following information:
+1. Some stats about the query you made, the number of points, the surface, and the perimeter
+2. The number of matches returned
+3. The time to process the query, the cold time, is extracted from the first query, and the hot time is computed after executing the same query three times.
+4. The most important part: You can observe and inspect how a query is being executed, use the slider of `+` and `-` to see all the cells we've inspected
+  - The **blue** cells represent cells that are full and require us to "deep dive" and call ourselves again at the next resolution
+  - The **green** cells are cells entirely contained within the queried shape, all the items they contain are marked as valid and will be returned
+  - The **red** cells are cells that exist in the database but are not part of our shape
+  - The **black** cells are cells that don't exist in the database
+5. The double slider below lets you filter the cells you see by resolution
+6. Finally, the coords that make your polygon
 
 ### How is the data stored
 
