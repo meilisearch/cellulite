@@ -9,7 +9,7 @@ repository = "https://github.com/irevoire/cellulite"
 authors = ["Tamo <tamo@meilisearch.com>"]
 keywords = ["geo", "geography", "database"]
 
-exclude = ["assets"]
+exclude = ["assets", "readme_assets"]
 
 [workspace]
 members = [ "benchmarks","examples/*"]
