@@ -102,23 +102,23 @@ fn basic_write() {
     ])));
     db.add(&mut wtxn, 0, &point).unwrap();
 
-    insta::assert_snapshot!(db.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Point(Zoint { lng: 0.0, lat: 0.0 })
     # Cells
     # Belly Cells
-    ");
+    "###);
 
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
-    insta::assert_snapshot!(db.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Point(Zoint { lng: 0.0, lat: 0.0 })
     # Cells
     Cell { res: 0, center: (2.3009, -5.2454) }: RoaringBitmap<[0]>
     # Belly Cells
-    ");
+    "###);
 
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 1.0,
@@ -129,8 +129,8 @@ fn basic_write() {
     ])));
     db.add(&mut wtxn, 2, &point).unwrap();
 
-    insta::assert_snapshot!(db.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Point(Zoint { lng: 0.0, lat: 0.0 })
     1: Point(Zoint { lng: 0.0, lat: 1.0 })
@@ -138,12 +138,12 @@ fn basic_write() {
     # Cells
     Cell { res: 0, center: (2.3009, -5.2454) }: RoaringBitmap<[0]>
     # Belly Cells
-    ");
+    "###);
 
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
 
-    insta::assert_snapshot!(db.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Point(Zoint { lng: 0.0, lat: 0.0 })
     1: Point(Zoint { lng: 0.0, lat: 1.0 })
@@ -155,7 +155,7 @@ fn basic_write() {
     Cell { res: 2, center: (-0.4597, 0.5342) }: RoaringBitmap<[0]>
     # Belly Cells
     Cell { res: 1, center: (2.0979, 0.4995) }: RoaringBitmap<[]>
-    ");
+    "###);
 
     let point = GeoJson::from(geojson::Geometry::new(geojson::Value::Point(vec![
         0.0, 3.0,
@@ -163,8 +163,8 @@ fn basic_write() {
     db.add(&mut wtxn, 3, &point).unwrap();
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
 
-    insta::assert_snapshot!(db.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Point(Zoint { lng: 0.0, lat: 0.0 })
     1: Point(Zoint { lng: 0.0, lat: 1.0 })
@@ -180,7 +180,7 @@ fn basic_write() {
     Cell { res: 3, center: (2.9436, 0.1993) }: RoaringBitmap<[3]>
     # Belly Cells
     Cell { res: 2, center: (2.0979, 0.4995) }: RoaringBitmap<[]>
-    ");
+    "###);
 }
 
 #[test]
@@ -200,8 +200,8 @@ fn bug_write_points_create_cells_too_deep() {
     ])));
     db.add(&mut wtxn, 1, &point).unwrap();
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
-    insta::assert_snapshot!(db.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Point(Zoint { lng: -11.460678226504395, lat: 48.213563161838714 })
     1: Point(Zoint { lng: -1.520397001416467, lat: 54.586501531522245 })
@@ -210,7 +210,7 @@ fn bug_write_points_create_cells_too_deep() {
     Cell { res: 1, center: (45.2992, -14.2485) }: RoaringBitmap<[0]>
     Cell { res: 1, center: (53.6528, 0.2143) }: RoaringBitmap<[1]>
     # Belly Cells
-    ");
+    "###);
 }
 
 #[test]
@@ -231,8 +231,8 @@ fn bug_write_points_create_unrelated_cells() {
     ])));
     db.add(&mut wtxn, 1, &point).unwrap();
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
-    insta::assert_snapshot!(db.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Point(Zoint { lng: 6.0197316417968105, lat: 49.63676497357687 })
     1: Point(Zoint { lng: 7.435508967561083, lat: 43.76438119061842 })
@@ -241,7 +241,7 @@ fn bug_write_points_create_unrelated_cells() {
     Cell { res: 1, center: (47.9847, 6.9179) }: RoaringBitmap<[0]>
     Cell { res: 1, center: (40.9713, 2.8207) }: RoaringBitmap<[1]>
     # Belly Cells
-    ");
+    "###);
 }
 
 #[test]
@@ -270,14 +270,14 @@ fn query_points_on_transmeridian_cell() {
 
     db.add(&mut wtxn, 0, &lake).unwrap();
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
-    insta::assert_snapshot!(db.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Point(Zoint { lng: -172.36201, lat: 64.42921 })
     # Cells
     Cell { res: 0, center: (64.4181, -158.9175) }: RoaringBitmap<[0]>
     # Belly Cells
-    ");
+    "###);
 
     let ret = db.in_shape(&wtxn, &contains_lake).unwrap();
     insta::assert_debug_snapshot!(ret, @"RoaringBitmap<[0]>");
@@ -288,8 +288,8 @@ fn query_points_on_transmeridian_cell() {
 
     db.add(&mut wtxn, 1, &airport).unwrap();
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
-    insta::assert_snapshot!(db.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Point(Zoint { lng: -172.36201, lat: 64.42921 })
     1: Point(Zoint { lng: -173.23841, lat: 64.37949 })
@@ -300,7 +300,7 @@ fn query_points_on_transmeridian_cell() {
     Cell { res: 2, center: (64.6946, -176.8313) }: RoaringBitmap<[1]>
     # Belly Cells
     Cell { res: 1, center: (67.6370, -175.8874) }: RoaringBitmap<[]>
-    ");
+    "###);
 
     let ret = db.in_shape(&wtxn, &contains_lake).unwrap();
     insta::assert_debug_snapshot!(ret, @"RoaringBitmap<[0]>");
@@ -333,8 +333,8 @@ fn store_all_kind_of_collection() {
     db.add(&mut wtxn, 2, &feature_collection.into()).unwrap();
 
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
-    insta::assert_snapshot!(db.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(db.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Collection(Zollection { bounding_box: BoundingBox { bottom_left: Coord { x: 6.0197316417968105, y: 49.63676497357687 }, top_right: Coord { x: 6.0197316417968105, y: 49.63676497357687 } }, points: ZultiPoints { bounding_box: BoundingBox { bottom_left: Coord { x: 6.0197316417968105, y: 49.63676497357687 }, top_right: Coord { x: 6.0197316417968105, y: 49.63676497357687 } }, points: [Zoint { lng: 6.0197316417968105, lat: 49.63676497357687 }] }, lines: ZultiLines { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zines: [] }, polygons: ZultiPolygons { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zolygons: [] } })
     1: Collection(Zollection { bounding_box: BoundingBox { bottom_left: Coord { x: 6.0197316417968105, y: 49.63676497357687 }, top_right: Coord { x: 6.0197316417968105, y: 49.63676497357687 } }, points: ZultiPoints { bounding_box: BoundingBox { bottom_left: Coord { x: 6.0197316417968105, y: 49.63676497357687 }, top_right: Coord { x: 6.0197316417968105, y: 49.63676497357687 } }, points: [Zoint { lng: 6.0197316417968105, lat: 49.63676497357687 }] }, lines: ZultiLines { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zines: [] }, polygons: ZultiPolygons { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zolygons: [] } })
@@ -372,7 +372,7 @@ fn store_all_kind_of_collection() {
     Cell { res: 13, center: (49.6368, 6.0197) }: RoaringBitmap<[]>
     Cell { res: 14, center: (49.6368, 6.0197) }: RoaringBitmap<[]>
     Cell { res: 15, center: (49.6368, 6.0197) }: RoaringBitmap<[]>
-    ");
+    "###);
     let contains =
         polygon![(x: 6.0, y: 49.0), (x: 7.0, y: 49.0), (x: 7.0, y: 50.0), (x: 6.0, y: 50.0)];
     let ret = db.in_shape(&wtxn, &contains).unwrap();
@@ -405,8 +405,8 @@ fn write_polygon_with_belly_cells_at_res0() {
     cellulite.add(&mut wtxn, 1, &shape).unwrap();
 
     cellulite.build(&mut wtxn, &|| false, &NoProgress).unwrap();
-    insta::assert_snapshot!(cellulite.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(cellulite.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Collection(Zollection { bounding_box: BoundingBox { bottom_left: Coord { x: -10.38791, y: 51.6838 }, top_right: Coord { x: -10.38791, y: 51.6838 } }, points: ZultiPoints { bounding_box: BoundingBox { bottom_left: Coord { x: -10.38791, y: 51.6838 }, top_right: Coord { x: -10.38791, y: 51.6838 } }, points: [Zoint { lng: -10.38791, lat: 51.6838 }] }, lines: ZultiLines { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zines: [] }, polygons: ZultiPolygons { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zolygons: [] } })
     1: Polygon(Zolygon { bounding_box: BoundingBox { bottom_left: Coord { x: -36.80442428588867, y: 37.05668258666992 }, top_right: Coord { x: 12.589740753173828, y: 65.76936340332031 } }, coords: [Coord { x: -36.80442428588867, y: 59.85004425048828 }, Coord { x: -8.567954063415527, y: 65.76936340332031 }, Coord { x: 12.589740753173828, y: 56.09892654418945 }, Coord { x: 6.169264793395996, y: 41.49180603027344 }, Coord { x: -11.232604026794434, y: 37.05668258666992 }, Coord { x: -32.81175231933594, y: 44.35645294189453 }, Coord { x: -36.80442428588867, y: 59.85004425048828 }] })
@@ -420,7 +420,7 @@ fn write_polygon_with_belly_cells_at_res0() {
     Cell { res: 0, center: (33.7110, -0.5345) }: RoaringBitmap<[1]>
     # Belly Cells
     Cell { res: 0, center: (52.6758, -11.6016) }: RoaringBitmap<[1]>
-    ");
+    "###);
 
     let filter = polygon![
          (x: -13.35211181640625, y: 51.78105163574219),
@@ -454,8 +454,8 @@ fn write_polygon_with_belly_cells_at_res1() {
     cellulite.add(&mut wtxn, 1, &shape).unwrap();
 
     cellulite.build(&mut wtxn, &|| false, &NoProgress).unwrap();
-    insta::assert_snapshot!(cellulite.snap(&wtxn), @r"
-    # Version: 0.3.0
+    insta::assert_snapshot!(cellulite.snap(&wtxn), @r###"
+    # Version: 0.3.1
     # Items
     0: Collection(Zollection { bounding_box: BoundingBox { bottom_left: Coord { x: -10.89288, y: 52.91525 }, top_right: Coord { x: -10.89288, y: 52.91525 } }, points: ZultiPoints { bounding_box: BoundingBox { bottom_left: Coord { x: -10.89288, y: 52.91525 }, top_right: Coord { x: -10.89288, y: 52.91525 } }, points: [Zoint { lng: -10.89288, lat: 52.91525 }] }, lines: ZultiLines { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zines: [] }, polygons: ZultiPolygons { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zolygons: [] } })
     1: Polygon(Zolygon { bounding_box: BoundingBox { bottom_left: Coord { x: -22.350751876831055, y: 46.764404296875 }, top_right: Coord { x: -1.9412200450897217, y: 57.86238098144531 } }, coords: [Coord { x: -22.350751876831055, y: 54.04570388793945 }, Coord { x: -14.230262756347656, y: 57.86238098144531 }, Coord { x: -3.6089367866516113, y: 56.31303405761719 }, Coord { x: -1.9412200450897217, y: 50.917137145996094 }, Coord { x: -7.79402494430542, y: 46.764404296875 }, Coord { x: -18.57700538635254, y: 48.349578857421875 }, Coord { x: -22.350751876831055, y: 54.04570388793945 }] })
@@ -470,7 +470,7 @@ fn write_polygon_with_belly_cells_at_res1() {
     Cell { res: 1, center: (57.6409, -21.6939) }: RoaringBitmap<[1]>
     # Belly Cells
     Cell { res: 1, center: (52.6758, -11.6016) }: RoaringBitmap<[1]>
-    ");
+    "###);
 
     let filter = polygon![
          (x: -14.853970527648926, y: 52.716609954833984),
