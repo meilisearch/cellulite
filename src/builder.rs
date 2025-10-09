@@ -79,11 +79,6 @@ impl Cellulite {
         cancel: &(impl Fn() -> bool + Send + Sync),
         progress: &impl Progress,
     ) -> Result<()> {
-        let db_version = self.get_version(wtxn)?;
-        if db_version != Version::default() {
-            return Err(Error::VersionMismatchOnBuild(db_version));
-        }
-
         // 1.
         let (inserted_items, removed_items) =
             self.retrieve_and_clear_updated_items(wtxn, cancel, progress)?;
