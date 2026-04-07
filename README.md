@@ -199,7 +199,7 @@ Options:
 ```
 
 The command I use the most is this one:
-```
+```bash
 cargo run -p benchmarks --release -- --dataset cadastre-parcelle --no-queries --db lyon.mdb --selector 69
 ```
 
@@ -462,7 +462,7 @@ alignment you want.
 This means, even though my keys are a single u32, in cellulite I need an
 alignment on 64 bits, and I have to write my keys on 64 bits.
 
-```rust
+```rust,ignore
 pub struct ItemKeyCodec;
 
 impl heed::BytesEncode<'_> for ItemKeyCodec {
