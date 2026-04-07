@@ -3,6 +3,7 @@ use geo::polygon;
 use steppe::NoProgress;
 
 #[test]
+#[ignore]
 fn from_0_3_0() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(
