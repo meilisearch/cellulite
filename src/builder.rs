@@ -109,19 +109,28 @@ impl Cellulite {
             if cancel() {
                 return Err(Error::BuildCanceled);
             }
-            let bitmap = self
+            let items_in_current_cell = self
                 .cell_db()
                 .get(wtxn, &Key::Cell(cell))?
                 .unwrap_or_default();
             // Awesome, we don't care about what's in the cell, wether it have multiple levels or not
-            if bitmap.len() < self.threshold || bitmap.intersection_len(&inserted_items) == 0 {
+            if items_in_current_cell.len() < self.threshold
+                || items_in_current_cell.is_disjoint(&inserted_items)
+            {
                 continue;
             }
+
+            let items_to_insert = if self.does_cell_have_children(wtxn, cell)? {
+                &items_in_current_cell & &inserted_items
+            } else {
+                items_in_current_cell.clone()
+            };
+
             self.insert_chunk_of_items_recursively(
                 wtxn,
                 cancel,
-                inserted_items.clone(),
-                bitmap,
+                items_in_current_cell,
+                items_to_insert,
                 cell,
                 &frozen_items,
             )?;
@@ -131,6 +140,22 @@ impl Cellulite {
         self.set_version(wtxn, &Version::default())?;
 
         Ok(())
+    }
+
+    fn does_cell_have_children(&self, rtxn: &RoTxn, cell: CellIndex) -> Result<bool> {
+        let Some(children) = get_children_cells(cell)? else {
+            return Ok(false);
+        };
+
+        for child in children {
+            if self.cell_db().get(rtxn, &Key::Cell(child))?.is_some()
+                || self.cell_db().get(rtxn, &Key::Belly(child))?.is_some()
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     /// 1. We remove all the items by id of the items database
