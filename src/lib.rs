@@ -97,7 +97,11 @@ impl Cellulite {
 
     /// Create all the databases required for cellulite to work.
     /// The prefix lets you to hold multiple cellulite database in a single environment.
-    pub fn create_from_env<Tls>(env: &Env<Tls>, wtxn: &mut RwTxn, prefix: &str) -> Result<Self> {
+    pub fn create_from_env<Tls>(
+        env: &Env<Tls>,
+        wtxn: &mut heed::UniqueRwTxn,
+        prefix: &str,
+    ) -> Result<Self> {
         let item = env.create_database(wtxn, Some(&format!("{prefix}-item")))?;
         let cell = env.create_database(wtxn, Some(&format!("{prefix}-cell")))?;
         let update = env.create_database(wtxn, Some(&format!("{prefix}-update")))?;
@@ -113,7 +117,11 @@ impl Cellulite {
 
     /// Open all the databases required for cellulite to work, return an error if any of the required database doesn't exists.
     /// The prefix lets you to hold multiple cellulite database in a single environment.
-    pub fn open_from_env<Tls>(env: &Env<Tls>, rtxn: &RoTxn, prefix: &str) -> Result<Self> {
+    pub fn open_from_env<Tls>(
+        env: &Env<Tls>,
+        rtxn: &heed::UniqueRoTxn,
+        prefix: &str,
+    ) -> Result<Self> {
         let item = env
             .open_database(rtxn, Some(&format!("{prefix}-item")))?
             .ok_or(Error::DatabaseDoesntExists)?;

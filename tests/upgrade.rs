@@ -18,7 +18,7 @@ fn from_0_3_0() {
             .open(dir.path())
             .unwrap()
     };
-    let mut wtxn = env.write_txn().unwrap();
+    let mut wtxn = env.unique_write_txn().unwrap();
     let cellulite = Cellulite::create_from_env(&env, &mut wtxn, "cellulite").unwrap();
     insta::assert_snapshot!(cellulite.get_version(&wtxn).unwrap(), @"0.3.0");
 
