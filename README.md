@@ -10,6 +10,7 @@ Cellulite is a crate based on LMDB for storing and retrieving shapes in the geoj
 The entry point of the crate is the [`Cellulite`] structure which contains all the LMDB database required.
 The preferred way of initializing it is through the [`Cellulite::create_from_env`] static method.
 ```rust,no_run
+use heed::CommitOrAbort;
 use cellulite::Cellulite;
 
 let env = unsafe {
@@ -19,8 +20,11 @@ let env = unsafe {
         .open("path/to/your/database")
 }
 .unwrap();
-let mut wtxn = env.write_txn().unwrap();
-let cellulite = Cellulite::create_from_env(&env, &mut wtxn, "cellulite").unwrap();
+let wtxn = env.write_txn().unwrap();
+let cellulite = env.create_databases_and_commit(wtxn, |dbo, wtxn| {
+    let cellulite = Cellulite::create_from_dbo(dbo, wtxn, "cellulite").unwrap();
+    Ok(CommitOrAbort::<_, ()>::Commit(cellulite))
+}).unwrap().unwrap_commit();
 ```
 
 ## Adding or removing shapes

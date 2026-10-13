@@ -1,5 +1,6 @@
 use cellulite::Cellulite;
 use geo::polygon;
+use heed::CommitOrAbort;
 use steppe::NoProgress;
 
 #[test]
@@ -18,8 +19,16 @@ fn from_0_3_0() {
             .open(dir.path())
             .unwrap()
     };
+    let wtxn = env.write_txn().unwrap();
+    let cellulite = env
+        .create_databases_and_commit(wtxn, |dbo, wtxn| {
+            let cell = Cellulite::create_from_dbo(dbo, wtxn, "cellulite").unwrap();
+            Ok(CommitOrAbort::<_, ()>::Commit(cell))
+        })
+        .unwrap()
+        .unwrap_commit();
+
     let mut wtxn = env.write_txn().unwrap();
-    let cellulite = Cellulite::create_from_dbo(&env, &mut wtxn, "cellulite").unwrap();
     insta::assert_snapshot!(cellulite.get_version(&wtxn).unwrap(), @"0.3.0");
 
     // This matches only a subset of the multi-point containing all the trees

@@ -3,7 +3,7 @@ use std::ops::Deref;
 use geo::{GeometryCollection, point, polygon};
 use geojson::{FeatureCollection, GeoJson};
 use h3o::LatLng;
-use heed::{Env, EnvOpenOptions, RoTxn, WithTls};
+use heed::{CommitOrAbort, Env, EnvOpenOptions, RoTxn, WithTls};
 use steppe::NoProgress;
 use tempfile::TempDir;
 
@@ -11,13 +11,13 @@ use crate::{Cellulite, Key};
 
 pub struct DatabaseHandle {
     pub env: Env<WithTls>,
-    pub database: Cellulite,
+    pub database: Cellulite<'static>,
     #[allow(unused)]
     pub tempdir: TempDir,
 }
 
 impl Deref for DatabaseHandle {
-    type Target = Cellulite;
+    type Target = Cellulite<'static>;
 
     fn deref(&self) -> &Self::Target {
         &self.database
@@ -82,9 +82,14 @@ fn create_database() -> DatabaseHandle {
             .open(dir.path())
     }
     .unwrap();
-    let mut wtxn = env.write_txn().unwrap();
-    let cellulite = Cellulite::create_from_dbo(&env, &mut wtxn, "cellulite").unwrap();
-    wtxn.commit().unwrap();
+    let wtxn = env.write_txn().unwrap();
+    let cellulite = env
+        .create_databases_and_commit(wtxn, |dbo, wtxn| {
+            let cellulite = Cellulite::create_from_dbo(dbo, wtxn, "cellulite").unwrap();
+            Ok(CommitOrAbort::<_, ()>::Commit(cellulite))
+        })
+        .unwrap()
+        .unwrap_commit();
     DatabaseHandle {
         env,
         database: cellulite,
@@ -103,7 +108,7 @@ fn basic_write() {
     db.add(&mut wtxn, 0, &point).unwrap();
 
     insta::assert_snapshot!(db.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Point(Zoint { lng: 0.0, lat: 0.0 })
     # Cells
@@ -112,7 +117,7 @@ fn basic_write() {
 
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Point(Zoint { lng: 0.0, lat: 0.0 })
     # Cells
@@ -130,7 +135,7 @@ fn basic_write() {
     db.add(&mut wtxn, 2, &point).unwrap();
 
     insta::assert_snapshot!(db.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Point(Zoint { lng: 0.0, lat: 0.0 })
     1: Point(Zoint { lng: 0.0, lat: 1.0 })
@@ -143,7 +148,7 @@ fn basic_write() {
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
 
     insta::assert_snapshot!(db.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Point(Zoint { lng: 0.0, lat: 0.0 })
     1: Point(Zoint { lng: 0.0, lat: 1.0 })
@@ -164,7 +169,7 @@ fn basic_write() {
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
 
     insta::assert_snapshot!(db.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Point(Zoint { lng: 0.0, lat: 0.0 })
     1: Point(Zoint { lng: 0.0, lat: 1.0 })
@@ -201,7 +206,7 @@ fn bug_write_points_create_cells_too_deep() {
     db.add(&mut wtxn, 1, &point).unwrap();
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Point(Zoint { lng: -11.460678226504395, lat: 48.213563161838714 })
     1: Point(Zoint { lng: -1.520397001416467, lat: 54.586501531522245 })
@@ -232,7 +237,7 @@ fn bug_write_points_create_unrelated_cells() {
     db.add(&mut wtxn, 1, &point).unwrap();
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Point(Zoint { lng: 6.0197316417968105, lat: 49.63676497357687 })
     1: Point(Zoint { lng: 7.435508967561083, lat: 43.76438119061842 })
@@ -271,7 +276,7 @@ fn query_points_on_transmeridian_cell() {
     db.add(&mut wtxn, 0, &lake).unwrap();
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Point(Zoint { lng: -172.36201, lat: 64.42921 })
     # Cells
@@ -289,7 +294,7 @@ fn query_points_on_transmeridian_cell() {
     db.add(&mut wtxn, 1, &airport).unwrap();
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Point(Zoint { lng: -172.36201, lat: 64.42921 })
     1: Point(Zoint { lng: -173.23841, lat: 64.37949 })
@@ -334,7 +339,7 @@ fn store_all_kind_of_collection() {
 
     db.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(db.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Collection(Zollection { bounding_box: BoundingBox { bottom_left: Coord { x: 6.0197316417968105, y: 49.63676497357687 }, top_right: Coord { x: 6.0197316417968105, y: 49.63676497357687 } }, points: ZultiPoints { bounding_box: BoundingBox { bottom_left: Coord { x: 6.0197316417968105, y: 49.63676497357687 }, top_right: Coord { x: 6.0197316417968105, y: 49.63676497357687 } }, points: [Zoint { lng: 6.0197316417968105, lat: 49.63676497357687 }] }, lines: ZultiLines { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zines: [] }, polygons: ZultiPolygons { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zolygons: [] } })
     1: Collection(Zollection { bounding_box: BoundingBox { bottom_left: Coord { x: 6.0197316417968105, y: 49.63676497357687 }, top_right: Coord { x: 6.0197316417968105, y: 49.63676497357687 } }, points: ZultiPoints { bounding_box: BoundingBox { bottom_left: Coord { x: 6.0197316417968105, y: 49.63676497357687 }, top_right: Coord { x: 6.0197316417968105, y: 49.63676497357687 } }, points: [Zoint { lng: 6.0197316417968105, lat: 49.63676497357687 }] }, lines: ZultiLines { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zines: [] }, polygons: ZultiPolygons { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zolygons: [] } })
@@ -406,7 +411,7 @@ fn write_polygon_with_belly_cells_at_res0() {
 
     cellulite.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(cellulite.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Collection(Zollection { bounding_box: BoundingBox { bottom_left: Coord { x: -10.38791, y: 51.6838 }, top_right: Coord { x: -10.38791, y: 51.6838 } }, points: ZultiPoints { bounding_box: BoundingBox { bottom_left: Coord { x: -10.38791, y: 51.6838 }, top_right: Coord { x: -10.38791, y: 51.6838 } }, points: [Zoint { lng: -10.38791, lat: 51.6838 }] }, lines: ZultiLines { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zines: [] }, polygons: ZultiPolygons { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zolygons: [] } })
     1: Polygon(Zolygon { bounding_box: BoundingBox { bottom_left: Coord { x: -36.80442428588867, y: 37.05668258666992 }, top_right: Coord { x: 12.589740753173828, y: 65.76936340332031 } }, coords: [Coord { x: -36.80442428588867, y: 59.85004425048828 }, Coord { x: -8.567954063415527, y: 65.76936340332031 }, Coord { x: 12.589740753173828, y: 56.09892654418945 }, Coord { x: 6.169264793395996, y: 41.49180603027344 }, Coord { x: -11.232604026794434, y: 37.05668258666992 }, Coord { x: -32.81175231933594, y: 44.35645294189453 }, Coord { x: -36.80442428588867, y: 59.85004425048828 }] })
@@ -455,7 +460,7 @@ fn write_polygon_with_belly_cells_at_res1() {
 
     cellulite.build(&mut wtxn, &|| false, &NoProgress).unwrap();
     insta::assert_snapshot!(cellulite.snap(&wtxn), @r###"
-    # Version: 0.3.1
+    # Version: 0.4.0
     # Items
     0: Collection(Zollection { bounding_box: BoundingBox { bottom_left: Coord { x: -10.89288, y: 52.91525 }, top_right: Coord { x: -10.89288, y: 52.91525 } }, points: ZultiPoints { bounding_box: BoundingBox { bottom_left: Coord { x: -10.89288, y: 52.91525 }, top_right: Coord { x: -10.89288, y: 52.91525 } }, points: [Zoint { lng: -10.89288, lat: 52.91525 }] }, lines: ZultiLines { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zines: [] }, polygons: ZultiPolygons { bounding_box: BoundingBox { bottom_left: Coord { x: 0.0, y: 0.0 }, top_right: Coord { x: 0.0, y: 0.0 } }, zolygons: [] } })
     1: Polygon(Zolygon { bounding_box: BoundingBox { bottom_left: Coord { x: -22.350751876831055, y: 46.764404296875 }, top_right: Coord { x: -1.9412200450897217, y: 57.86238098144531 } }, coords: [Coord { x: -22.350751876831055, y: 54.04570388793945 }, Coord { x: -14.230262756347656, y: 57.86238098144531 }, Coord { x: -3.6089367866516113, y: 56.31303405761719 }, Coord { x: -1.9412200450897217, y: 50.917137145996094 }, Coord { x: -7.79402494430542, y: 46.764404296875 }, Coord { x: -18.57700538635254, y: 48.349578857421875 }, Coord { x: -22.350751876831055, y: 54.04570388793945 }] })
