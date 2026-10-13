@@ -19,7 +19,7 @@ use zerometry::{InputRelation, RelationBetweenShapes, Zerometry};
 
 use crate::{Cellulite, Error, keys::Key};
 
-impl Cellulite {
+impl<'e> Cellulite<'e> {
     fn retrieve_frozen_items<'a>(
         &self,
         rtxn: &'a RoTxn,

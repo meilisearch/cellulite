@@ -83,7 +83,7 @@ fn create_database() -> DatabaseHandle {
     }
     .unwrap();
     let mut wtxn = env.write_txn().unwrap();
-    let cellulite = Cellulite::create_from_env(&env, &mut wtxn, "cellulite").unwrap();
+    let cellulite = Cellulite::create_from_dbo(&env, &mut wtxn, "cellulite").unwrap();
     wtxn.commit().unwrap();
     DatabaseHandle {
         env,

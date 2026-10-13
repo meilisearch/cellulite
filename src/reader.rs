@@ -11,7 +11,7 @@ use zerometry::RelationBetweenShapes;
 
 use crate::{Cellulite, Result};
 
-impl Cellulite {
+impl<'e> Cellulite<'e> {
     pub fn in_shape(&self, rtxn: &RoTxn, polygon: &Polygon) -> Result<RoaringBitmap> {
         self.in_shape_with_inspector(rtxn, polygon, &mut |_| ())
     }
