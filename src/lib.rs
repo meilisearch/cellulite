@@ -9,7 +9,7 @@ use geo::{Densify, Geometry, Haversine};
 use geojson::GeoJson;
 use h3o::{CellIndex, Resolution};
 use heed::{
-    DatabaseStat, Env, RoTxn, RwTxn, Unspecified,
+    DatabaseOpener, DatabaseStat, OnCommit, RoTxn, RwTxn, Unspecified,
     byteorder::BE,
     types::{Bytes, U32},
 };
@@ -30,10 +30,10 @@ mod test;
 pub use crate::error::Error;
 use crate::{roaring::RoaringBitmapCodec, zerometry::ZerometryCodec};
 
-pub type ItemDb = heed::Database<ItemKeyCodec, ZerometryCodec>;
-pub type CellDb = heed::Database<CellKeyCodec, RoaringBitmapCodec>;
-pub type UpdateDb = heed::Database<U32<BE>, UpdateType>;
-pub type MetadataDb = heed::Database<MetadataKey, Unspecified>;
+pub type ItemDb<'t> = heed::Database<'t, ItemKeyCodec, ZerometryCodec>;
+pub type CellDb<'t> = heed::Database<'t, CellKeyCodec, RoaringBitmapCodec>;
+pub type UpdateDb<'t> = heed::Database<'t, U32<BE>, UpdateType>;
+pub type MetadataDb<'t> = heed::Database<'t, MetadataKey, Unspecified>;
 pub type ItemId = u32;
 
 steppe::make_enum_progress! {
@@ -54,23 +54,23 @@ type Result<O, E = Error> = std::result::Result<O, E>;
 
 /// The entry-point of the lib. It contains all the database required to write and read stuff.
 #[derive(Clone)]
-pub struct Cellulite {
+pub struct Cellulite<'e> {
     /// Links the item IDs with their Zerometry
-    pub(crate) item: ItemDb,
+    pub(crate) item: ItemDb<'e>,
     /// Links both the normal and belly `CellIndex` with a roaring bitmap of the items they contains.
-    pub(crate) cell: CellDb,
+    pub(crate) cell: CellDb<'e>,
     /// Temporary database holding the operation (addition or deletion) made on the items.
     /// It's in a temporary database so we can clear it quiclky.
-    pub(crate) update: UpdateDb,
+    pub(crate) update: UpdateDb<'e>,
     /// Contains all the metadata related to the database.
-    pub(crate) metadata: MetadataDb,
+    pub(crate) metadata: MetadataDb<'e>,
 
     /// After how many elements should we break a cell into sub-cells
     /// This is only available for the test and visualizing tools to use it.
     pub threshold: u64,
 }
 
-impl Cellulite {
+impl<'e> Cellulite<'e> {
     pub const fn nb_dbs() -> u32 {
         4
     }
@@ -97,11 +97,15 @@ impl Cellulite {
 
     /// Create all the databases required for cellulite to work.
     /// The prefix lets you to hold multiple cellulite database in a single environment.
-    pub fn create_from_env<Tls>(env: &Env<Tls>, wtxn: &mut RwTxn, prefix: &str) -> Result<Self> {
-        let item = env.create_database(wtxn, Some(&format!("{prefix}-item")))?;
-        let cell = env.create_database(wtxn, Some(&format!("{prefix}-cell")))?;
-        let update = env.create_database(wtxn, Some(&format!("{prefix}-update")))?;
-        let metadata = env.create_database(wtxn, Some(&format!("{prefix}-metadata")))?;
+    pub fn create_from_dbo<Tls>(
+        dbo: &DatabaseOpener<'e, Tls>,
+        wtxn: &mut RwTxn<'e>,
+        prefix: &str,
+    ) -> Result<Self> {
+        let item = dbo.create_database(wtxn, Some(&format!("{prefix}-item")))?;
+        let cell = dbo.create_database(wtxn, Some(&format!("{prefix}-cell")))?;
+        let update = dbo.create_database(wtxn, Some(&format!("{prefix}-update")))?;
+        let metadata = dbo.create_database(wtxn, Some(&format!("{prefix}-metadata")))?;
         Ok(Self {
             item,
             cell,
@@ -113,7 +117,11 @@ impl Cellulite {
 
     /// Open all the databases required for cellulite to work, return an error if any of the required database doesn't exists.
     /// The prefix lets you to hold multiple cellulite database in a single environment.
-    pub fn open_from_env<Tls>(env: &Env<Tls>, rtxn: &RoTxn, prefix: &str) -> Result<Self> {
+    pub fn open_from_dbo<Tls>(
+        env: &DatabaseOpener<'e, Tls>,
+        rtxn: &RoTxn<'e>,
+        prefix: &str,
+    ) -> Result<Self> {
         let item = env
             .open_database(rtxn, Some(&format!("{prefix}-item")))?
             .ok_or(Error::DatabaseDoesntExists)?;
@@ -136,7 +144,12 @@ impl Cellulite {
     }
 
     /// Create the cellulite struct from already opened databases.
-    pub fn from_dbs(item: ItemDb, cell: CellDb, update: UpdateDb, metadata: MetadataDb) -> Self {
+    pub fn from_dbs(
+        item: ItemDb<'e>,
+        cell: CellDb<'e>,
+        update: UpdateDb<'e>,
+        metadata: MetadataDb<'e>,
+    ) -> Self {
         Self {
             item,
             cell,
@@ -156,12 +169,12 @@ impl Cellulite {
     }
 
     #[inline]
-    fn item_db(&self) -> ItemDb {
+    fn item_db(&self) -> ItemDb<'e> {
         self.item
     }
 
     #[inline]
-    fn cell_db(&self) -> CellDb {
+    fn cell_db(&self) -> CellDb<'e> {
         self.cell
     }
 
@@ -294,6 +307,27 @@ impl Cellulite {
             total_belly_cells,
             belly_cells_by_resolution,
         })
+    }
+}
+
+impl OnCommit for Cellulite<'_> {
+    type Committed = Cellulite<'static>;
+
+    fn on_commit(self, token: &heed::CommitToken) -> Self::Committed {
+        let Self {
+            item,
+            cell,
+            update,
+            metadata,
+            threshold,
+        } = self;
+        Cellulite {
+            item: item.on_commit(token),
+            cell: cell.on_commit(token),
+            update: update.on_commit(token),
+            metadata: metadata.on_commit(token),
+            threshold,
+        }
     }
 }
 

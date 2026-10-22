@@ -148,7 +148,7 @@ fn main() {
     }
     .unwrap();
     let mut wtxn = env.write_txn().unwrap();
-    let cellulite = Cellulite::create_from_env(&env, &mut wtxn, "cellulite").unwrap();
+    let cellulite = Cellulite::create_from_dbo(&env, &mut wtxn, "cellulite").unwrap();
     let metadata: heed::Database<Str, Bytes> =
         env.create_database(&mut wtxn, Some("metadata")).unwrap();
 
