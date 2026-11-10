@@ -522,3 +522,7 @@ I could freeze the items while I'm writing in the cells.
 This is not supported by heed at all currently, and can't be since the `Database` type
 is `Copy`.
 We would need the values to be linked both to their txn and their database.
+
+## License
+
+Cellulite is licensed under MIT. By default, cellulite statically links with LMDB, which is licensed under [the OpenLDAP license](./LICENSE-OPENLDAP). By using cellulite, you need to make sure you comply with the terms of both the MIT and the OpenLDAP license.
